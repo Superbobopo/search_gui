@@ -551,7 +551,9 @@ def main():
             command = [sys.executable, str(PROJECT / 'search_gui.py')]
             if '--desktop' in sys.argv:
                 command.append('--desktop')
-            result = subprocess.run(command, env=env, cwd=folder, timeout=60)
+            result = subprocess.run(command, env=env, cwd=folder, timeout=60,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            print(result.stdout, end='')
             raise SystemExit(result.returncode)
     stack, paths = prepare()
     with stack:
@@ -559,4 +561,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    from tools.ui_test_support import run_gui_check
+    run_gui_check(main)

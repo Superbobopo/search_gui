@@ -13,7 +13,7 @@
 - Les dossiers `old/` et `PythonProject1/` sont des copies historiques ; ne pas les modifier pour une évolution de l'application active.
 - Conserver les menus, boutons, recherches, navigation, vues de trace, contrôles robot/convoyage, comparaison IDPK et tracking existants, sauf demande explicite.
 - Garder la compatibilité avec les anciennes traces et les exemples locaux. Adapter la lecture, pas les fichiers de traces.
-- Les sources sont `C:/Apoteka/traces`, `traces/` à côté du script (ou du `.exe` en mode compilé), et `traces/` sur le Bureau Windows avec les sous-dossiers `R1/` et `R2/`. Résoudre le vrai Bureau Windows, y compris redirigé vers OneDrive. Charger toutes les sources ensemble et garder leur provenance (Local R1/R2, Bureau R1/R2, Apoteka).
+- Les sources sont `C:/Apoteka/traces`, `traces/` à côté du script (ou du `.exe` en mode compilé), et `traces/` sur le Bureau Windows avec les sous-dossiers `R1/` et `R2/`. Résoudre le vrai Bureau Windows, y compris redirigé vers OneDrive. Si plusieurs emplacements contiennent des traces au démarrage, demander lesquels charger avant d'ouvrir l'index ; sinon chargement automatique. Garder R1/R2 ensemble dans chaque emplacement retenu et leur provenance (Local R1/R2, Bureau R1/R2, Apoteka). Le cache propre à la sélection ne doit pas exposer les résultats des sources non choisies.
 - Identifier les fichiers par leur chemin complet ; ne jamais résoudre un clic par le seul nom de fichier. Les liens d'archives et comparaisons chronologiques d'un robot restent dans leur dossier source.
 
 ## Formats et maintenance
@@ -30,7 +30,7 @@
 
 ## Indexation et interface réactive
 
-- SQLite/FTS5 est intégré à Python ; aucun serveur n'est nécessaire. Le cache se trouve dans `%LOCALAPPDATA%/TracOmega/cache/<identifiant-du-projet>/trace_index.sqlite3`.
+- SQLite/FTS5 est intégré à Python ; aucun serveur n'est nécessaire. Les caches se trouvent dans `%LOCALAPPDATA%/TracOmega/cache/<identifiant-du-projet>/`. Le service utilise `trace_index_sources_<identifiant-de-sélection>.sqlite3` ; l'ancien `trace_index.sqlite3` reste conservé pour les outils historiques.
 - L'index conserve les lignes et numéros originaux, les champs, événements robot, liens d'archives, lots, mesures IDPK et valeurs des registres MODBUS. Le texte intégral en mémoire est limité aux trois fichiers récemment ouverts.
 - Synchroniser uniquement les fichiers ajoutés/modifiés/supprimés. Publier chaque fichier dans une transaction WAL. Pour un fichier actif, indexer un instantané borné et vérifier que le préfixe n'a pas été réécrit ; une simple croissance ne doit pas empêcher la publication.
 - Conserver les recherches par sous-chaîne et sans distinction de casse, les préfixes de référence, ainsi que les correspondances exactes d'ID et de critères avancés.
@@ -45,6 +45,9 @@
 
 ## Vérifications et commandes
 
+- Préférence explicite de l'utilisateur : limiter les vérifications aux comportements modifiés et aux régressions directement concernées. Ne pas relancer les tests déjà réussis sans changement ou nouvelle incertitude justifiant cette répétition ; ne pas exécuter systématiquement tous les anciens parcours, benchmarks ou contrôles réels.
+- Ne jamais prendre le focus du bureau utilisateur pendant les tests. Les outils graphiques passent par `tools/ui_test_support.py`, qui lance le contrôle sur un bureau Windows privé sans l'afficher ni le sélectionner. Si cette isolation échoue, arrêter le contrôle ; aucun repli sur le bureau utilisateur. Ne pas lancer directement un contrôle graphique sans cette protection.
+- Choix des sources uniquement : `.\.build-venv\Scripts\python.exe -B tools\check_source_choice.py` ; tests de service ciblés dans `tests/test_source_choice.py`.
 - Lancement PowerShell : `.\.build-venv\Scripts\python.exe .\search_gui.py` (sans activation du venv).
 - Tests : `.\.build-venv\Scripts\python.exe -m unittest discover -s tests -v`.
 - Syntaxe : `.\.build-venv\Scripts\python.exe -m py_compile search_gui.py trace_sources.py trace_parser.py trace_store.py indexed_ui.py background_tasks.py app_assets.py selection_state.py style_config.py ui_theme.py trace_view.py`.

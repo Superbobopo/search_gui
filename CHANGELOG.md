@@ -2,6 +2,27 @@
 
 Chaque intervention livrée ajoute une entrée ici. Consulter également `AGENTS.md` avant de modifier l'application. Les dates de travaux antérieurs n'étant pas établies, leur historique est reconstitué ci-dessous à la date de consignation ; cela ne leur attribue pas une date de réalisation inventée.
 
+## 2026-10-18 — Choix des sources et tests sans prise de focus
+
+Demande : demander quelles sources utiliser si Apoteka, le Bureau et/ou le dossier du programme contiennent simultanément des traces ; ne plus faire apparaître les fenêtres de tests au premier plan ; éviter de répéter les vérifications déjà réussies sans nécessité.
+
+Causes : le service cumulait toutes les racines sans confirmation. Les outils graphiques déplaçaient les fenêtres hors écran après construction et employaient `focus_force()` pour certains événements clavier : ces appels sur le bureau interactif pouvaient prendre la main. Les parcours complets répétaient aussi des contrôles sans lien direct avec le changement.
+
+Fonctionnalités livrées :
+
+- Détection des emplacements distincts contenant réellement des fichiers OMEGA/MODBUS, puis choix par cases à cocher et bouton « Charger la sélection » si plusieurs sources sont disponibles. Aucun index ouvert avant validation. Avec une seule source, chargement automatique ; sans source, surveillance des racines configurées. La détection et l'attente restent en worker, la fenêtre et ses variables Tk sur le thread principal. Fermer le choix quitte l'application sans démarrer l'indexation.
+- Le choix vaut pour la session et conserve R1/R2 de chaque emplacement retenu. Les recherches et rafraîchissements ne parcourent que ces emplacements. Cache séparé par combinaison de chemins complets, stable quel que soit leur ordre, pour ne pas exposer les résultats d'une autre sélection. L'ancien cache est conservé ; la première ouverture d'une combinaison crée son propre index.
+- `tools/ui_test_support.py` lance les contrôles sur un bureau Windows privé via `CreateDesktopW`/`CreateProcessW`, sans `SwitchDesktop`. Les fenêtres et prises de focus de test restent sur ce bureau distinct. Si sa création échoue, aucun repli sur le bureau utilisateur. Les trois outils existants et le nouveau contrôle ciblé utilisent ce lanceur ; les sorties du processus isolé sont rapatriées dans la console.
+- Préférences permanentes inscrites dans `AGENTS.md` : tests ciblés, pas de répétition sans changement/incertitude, aucun test graphique sur le bureau utilisateur. README actualisé ; variables du dialogue libérées dans son `destroy()` sur le thread principal.
+
+Vérifications réellement exécutées, limitées au changement :
+
+- `.\.build-venv\Scripts\python.exe -B -m unittest discover -s tests -p test_source_choice.py -v` : les **5 nouveaux tests initiaux réussissent en 0,119 s**, couvrant sources disponibles/dédupliquées, cache par choix, attente avant ouverture d'index, chargement automatique et annulation. Après ajout du cas sans source, seul `.\.build-venv\Scripts\python.exe -B -m unittest tests.test_source_choice.SourceChoiceTests.test_no_sources_still_watches_configured_roots -v` a été exécuté : **1 test réussi en 0,002 s**. Les cinq précédents n'ont pas été relancés.
+- `.\.build-venv\Scripts\python.exe -B tools\check_source_choice.py` : **réussi**, identité du bureau privé vérifiée avec l'API Windows, trois sources temporaires proposées, aucune base créée avant choix, vrai clic Tk sur Bureau puis bouton de validation, deux fichiers R1/R2 du Bureau indexés et recherche via le bouton Rechercher ; sources Projet/Apoteka absentes des résultats. Le premier essai avait échoué car `CTkCheckBox` ne fournit pas `invoke()` ; le pilote génère maintenant un vrai événement `<Button-1>`. Le dernier passage après la libération explicite des variables du dialogue réussit aussi. Aucun contrôle réalisé sur le bureau utilisateur.
+- `.\.build-venv\Scripts\python.exe -m py_compile indexed_ui.py trace_sources.py trace_store.py source_choice.py tools/ui_test_support.py tools/check_source_choice.py tools/check_interactions.py tools/check_real_case.py tools/smoke_interface.py tests/test_source_choice.py` : réussi. `git -c core.whitespace=cr-at-eol diff --check` : réussi.
+
+Limites et contrôles non exécutés : pas de répétition des 67 tests antérieurs, des anciens parcours d'interface, du cas réel ni des benchmarks. L'intégration du lanceur aux anciens outils est vérifiée par syntaxe, leur parcours n'a pas été rejoué. Le contrôle ciblé valide une source choisie parmi trois ; le moteur de choix multiple est couvert par l'identité du cache, sans parcours graphique exhaustif de toutes les combinaisons. Le défaut de recherche locale dans la grande trace décrit dans l'entrée précédente reste ouvert. Pas d'exécutable reconstruit ; traces, ancien cache courant, environnements et copies historiques non modifiés.
+
 ## 2026-10-18 — Traces R1/R2 du Bureau Windows
 
 Demande : ajouter le dossier `traces` du Bureau, contenant `R1/` et `R2/`, aux sources existantes.

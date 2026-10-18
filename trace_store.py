@@ -95,10 +95,15 @@ def _decode_physical(raw, encoding, offset):
     return raw.decode(codec, errors='replace').replace('\r\n', '\n').replace('\r', '\n')
 
 
-def cache_path():
+def cache_path(directories=None):
     identity = hashlib.sha256(path_key(application_directory()).encode()).hexdigest()[:16]
     root = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache"))
-    return root / "TracOmega" / "cache" / identity / "trace_index.sqlite3"
+    filename = "trace_index.sqlite3"
+    if directories is not None:
+        sources = '\n'.join(sorted({path_key(path) for path in directories}))
+        scope = hashlib.sha256(sources.encode()).hexdigest()[:16]
+        filename = f"trace_index_sources_{scope}.sqlite3"
+    return root / "TracOmega" / "cache" / identity / filename
 
 
 def detect_encoding(path):

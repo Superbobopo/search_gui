@@ -14,8 +14,9 @@ import customtkinter as ctk
 
 from background_tasks import BackgroundTasks
 from trace_parser import format_ticket_fields, parse_fields, timestamp_parts
-from trace_sources import discover_trace_files, trace_label
-from trace_store import TraceStore, Cancelled, CHECKPOINTS
+from trace_sources import discover_trace_files, trace_label, available_trace_sources, trace_directories
+from trace_store import TraceStore, Cancelled, CHECKPOINTS, cache_path
+from source_choice import SourceChoiceDialog
 from app_assets import apply_icon
 from selection_state import OccurrenceSelection
 from ui_theme import ManagedTextbox
@@ -26,6 +27,9 @@ class IndexedAppMixin:
         self.tasks = BackgroundTasks()
         self._index_messages = Queue()
         self._stop_index = threading.Event()
+        self._sources_chosen = threading.Event()
+        self._selected_directories = None
+        self._source_dialog = None
         self._groups = []
         self._group_index = 0
         self._selection_numbers = []
@@ -56,7 +60,18 @@ class IndexedAppMixin:
 
     def _index_loop(self):
         try:
-            store = TraceStore()
+            sources = available_trace_sources()
+            if len(sources) > 1:
+                self._index_messages.put(('sources', sources))
+                while not self._sources_chosen.wait(.1):
+                    if self._stop_index.is_set():
+                        return
+            else:
+                self._selected_directories = (tuple(directory for name, directory in sources)
+                                              if sources else tuple(trace_directories()))
+            if self._stop_index.is_set():
+                return
+            store = TraceStore(cache_path(self._selected_directories))
             try:
                 metadata = store.metadata()
             except sqlite3.DatabaseError:
@@ -69,7 +84,7 @@ class IndexedAppMixin:
                     self._index_messages.put(('rebuilding',))
                     store.rebuild()
                     self._index_messages.put(('ready', store, [], False))
-                paths = discover_trace_files()
+                paths = discover_trace_files(directories=self._selected_directories)
                 def progress(done, total, path, published):
                     self._index_messages.put(('progress', done, total, path, published,
                                               store.metadata() if published else None))
@@ -92,7 +107,11 @@ class IndexedAppMixin:
         try:
             while True:
                 item = self._index_messages.get_nowait()
-                if item[0] == 'ready':
+                if item[0] == 'sources':
+                    self.index_status.set('Choisissez les sources de traces à charger')
+                    self._source_dialog = SourceChoiceDialog(
+                        self, item[1], self._accept_trace_sources, self._close_indexed_app)
+                elif item[0] == 'ready':
                     self.store = item[1]
                     self._indexed_complete = item[3]
                     self._install_metadata(item[2])
@@ -134,6 +153,15 @@ class IndexedAppMixin:
             self.tasks.drain()
         finally:
             self.after(30, self._poll_indexed_service)
+
+    def _accept_trace_sources(self, directories):
+        if not directories:
+            return
+        self._selected_directories = tuple(directories)
+        self._source_dialog.destroy()
+        self._source_dialog = None
+        self.index_status.set('Ouverture de l’index…')
+        self._sources_chosen.set()
 
     def _install_metadata(self, metadata):
         self.file_list = [row['path'] for row in metadata]

@@ -37,6 +37,18 @@ def path_key(path):
     return os.path.normcase(os.path.realpath(path))
 
 
+def available_trace_sources():
+    """List nonempty roots once, preserving the source and full root path."""
+    found = []
+    seen = set()
+    for name, directory in zip(("Apoteka", "À côté du programme", "Bureau"), trace_directories()):
+        key = path_key(directory)
+        if key not in seen and discover_trace_files(directories=[directory]):
+            found.append((name, os.path.abspath(directory)))
+            seen.add(key)
+    return tuple(found)
+
+
 def discover_trace_files(prefix=None, directories=None):
     """Return distinct absolute paths; missing or inaccessible roots are skipped."""
     paths = {}

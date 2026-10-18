@@ -39,7 +39,7 @@ def main():
              patch.object(sources, 'desktop_directory', return_value=str(base / 'Desktop')), \
              patch.object(sources, 'FIXED_DIRECTORY', str(base / 'absent')), \
              patch.object(TraceStore, '_index_snapshot', pause_archive), \
-             patch.object(indexed_ui, 'TraceStore', side_effect=lambda: TraceStore(base / 'index.db')):
+             patch.object(indexed_ui, 'TraceStore', side_effect=lambda database=None: TraceStore(base / 'index.db')):
             errors = []
             before = time.perf_counter()
             app = gui.SearchApp(); app.withdraw()
@@ -104,4 +104,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    from tools.ui_test_support import run_gui_check
+    run_gui_check(main)

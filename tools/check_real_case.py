@@ -124,4 +124,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    from tools.ui_test_support import run_gui_check
+    run_gui_check(main)

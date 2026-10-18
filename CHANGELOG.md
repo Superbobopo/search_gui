@@ -18,6 +18,8 @@ Commandes et contrôles réellement exécutés :
 - `.\.build-venv\Scripts\python.exe -m py_compile search_gui.py trace_sources.py trace_parser.py trace_store.py indexed_ui.py background_tasks.py app_assets.py selection_state.py style_config.py ui_theme.py trace_view.py` : réussi.
 - `git check-ignore` sur les traces, environnements, benchmarks, builds, copies historiques et `.env` : exclusions confirmées. Recherche `rg` de signatures de jetons GitHub/AWS et clés privées dans les sources et documents publiables : aucune correspondance ; ce contrôle ciblé ne constitue pas un audit exhaustif de secrets.
 - `git -c credential.interactive=never push --dry-run origin main` : accès distant vérifié, branche encore identique à ce stade.
+- `git diff --cached --check` : signalement des CRLF du fichier existant ; `git -c core.whitespace=cr-at-eol diff --cached --check` : réussi, sans changement du code pour convertir les fins de ligne.
+- `git ls-files` et `git diff --cached --stat` : **33 fichiers** publiables contrôlés, sans traces d'exploitation, environnements, caches ni builds. `git commit -m "Publier la version actuelle de TracOmega et sa documentation"`, puis `git -c credential.interactive=never push -u origin main` : **publication réussie**, commit `b1ced26`, historique distant conservé. `git status --short` : propre ; `git ls-remote origin refs/heads/main` et `git rev-parse HEAD` : même commit local et distant après publication. Cette confirmation est ajoutée dans un commit documentaire complémentaire.
 
 Limites : aucune installation dans un environnement neuf, interaction Tkinter ou mesure de performances réexécutée pour cette préparation documentaire. Aucun exécutable reconstruit ; traces, cache courant et copies historiques inchangés.
 

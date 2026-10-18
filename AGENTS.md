@@ -13,7 +13,7 @@
 - Les dossiers `old/` et `PythonProject1/` sont des copies historiques ; ne pas les modifier pour une évolution de l'application active.
 - Conserver les menus, boutons, recherches, navigation, vues de trace, contrôles robot/convoyage, comparaison IDPK et tracking existants, sauf demande explicite.
 - Garder la compatibilité avec les anciennes traces et les exemples locaux. Adapter la lecture, pas les fichiers de traces.
-- Les sources sont `C:/Apoteka/traces` et `traces/` à côté du script (ou du `.exe` en mode compilé). Charger R1 et R2 ensemble et garder leur provenance.
+- Les sources sont `C:/Apoteka/traces`, `traces/` à côté du script (ou du `.exe` en mode compilé), et `traces/` sur le Bureau Windows avec les sous-dossiers `R1/` et `R2/`. Résoudre le vrai Bureau Windows, y compris redirigé vers OneDrive. Charger toutes les sources ensemble et garder leur provenance (Local R1/R2, Bureau R1/R2, Apoteka).
 - Identifier les fichiers par leur chemin complet ; ne jamais résoudre un clic par le seul nom de fichier. Les liens d'archives et comparaisons chronologiques d'un robot restent dans leur dossier source.
 
 ## Formats et maintenance

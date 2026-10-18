@@ -1,6 +1,7 @@
 """Discovery and display names for installed and local trace files."""
 
 import ntpath
+import ctypes
 import os
 import sys
 
@@ -14,8 +15,22 @@ def application_directory():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def desktop_directory():
+    """Locate the Windows Desktop, including redirected/OneDrive desktops."""
+    if os.name == "nt":
+        try:
+            buffer = ctypes.create_unicode_buffer(32768)
+            # CSIDL_DESKTOPDIRECTORY: physical user Desktop, not the shell view.
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buffer) == 0 and buffer.value:
+                return buffer.value
+        except (AttributeError, OSError):
+            pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
 def trace_directories():
-    return (FIXED_DIRECTORY, os.path.join(application_directory(), "traces"))
+    return (FIXED_DIRECTORY, os.path.join(application_directory(), "traces"),
+            os.path.join(desktop_directory(), "traces"))
 
 
 def path_key(path):
@@ -41,17 +56,19 @@ def discover_trace_files(prefix=None, directories=None):
 
 
 def trace_label(path):
-    local = os.path.join(application_directory(), "traces")
-    try:
-        relative = os.path.relpath(path, local)
-        if relative != os.pardir and not relative.startswith(os.pardir + os.sep):
-            parts = relative.split(os.sep)
-            source = {"trace r1": "Local R1", "trace r2": "Local R2"}.get(
-                parts[0].lower(), "Local"
-            )
-            return f"{source} / {relative}"
-    except ValueError:
-        pass
+    roots = ((os.path.join(application_directory(), "traces"), "Local"),
+             (os.path.join(desktop_directory(), "traces"), "Bureau"))
+    for root, origin in roots:
+        try:
+            relative = os.path.relpath(path, root)
+            if relative != os.pardir and not relative.startswith(os.pardir + os.sep):
+                robot = {"trace r1": "R1", "trace r2": "R2", "r1": "R1", "r2": "R2"}.get(
+                    relative.split(os.sep)[0].lower()
+                )
+                source = f"{origin} {robot}" if robot else origin
+                return f"{source} / {relative}"
+        except ValueError:
+            pass
     return f"Apoteka / {os.path.relpath(path, FIXED_DIRECTORY)}"
 
 

@@ -2,6 +2,28 @@
 
 Chaque intervention livrée ajoute une entrée ici. Consulter également `AGENTS.md` avant de modifier l'application. Les dates de travaux antérieurs n'étant pas établies, leur historique est reconstitué ci-dessous à la date de consignation ; cela ne leur attribue pas une date de réalisation inventée.
 
+## 2026-10-18 — Traces R1/R2 du Bureau Windows
+
+Demande : ajouter le dossier `traces` du Bureau, contenant `R1/` et `R2/`, aux sources existantes.
+
+Cause : `trace_directories()` ne connaissait que les traces Apoteka et celles du projet ; `trace_label()` classait toute autre source comme Apoteka.
+
+Fonctionnalités livrées : découverte centralisée du troisième dossier dans `trace_sources.py`, localisation du Bureau physique par l'API Windows `SHGetFolderPathW` (y compris Bureau redirigé/OneDrive), repli vers `~/Desktop` si l'API échoue. Toutes les sources restent cumulées et leurs chemins complets préservés. Libellés `Bureau R1`/`Bureau R2`, filtres MODBUS/OMEGA, exclusion `.sav`, déduplication et archives du même robot conservés. Notice et consignes actualisées. Les tests et outils d'interface isolent maintenant aussi le Bureau avec un dossier temporaire ; `tools/check_interactions.py --desktop` permet de tester les deux robots dans cette nouvelle source, également avec `--script`.
+
+Vérifications réellement exécutées :
+
+- `.\.build-venv\Scripts\python.exe -B -m unittest discover -s tests -p test_trace_sources.py -v` avant adaptation : les deux nouveaux tests de découverte du Bureau échouent, reproduisant l'absence de cette source.
+- `.\.build-venv\Scripts\python.exe -B -m unittest discover -s tests -v` après adaptation : **67 tests réussis en 3,065 s**. Les quatre nouveaux tests couvrent le Bureau redirigé, l'échec de son API, les cinq sources homonymes, les libellés, les recherches via TraceStore et liens d'archives, l'ajout/suppression, les racines communes et les filtres. Un passage intermédiaire avait échoué sur une assertion utilisant à tort un dictionnaire au lieu du tuple renvoyé par `TraceStore.search` ; assertion corrigée avant le passage final.
+- `.\.build-venv\Scripts\python.exe -m py_compile search_gui.py trace_sources.py trace_parser.py trace_store.py indexed_ui.py background_tasks.py app_assets.py selection_state.py style_config.py ui_theme.py trace_view.py tools/check_interactions.py tools/smoke_interface.py` : réussi. `git -c core.whitespace=cr-at-eol diff --check` : réussi.
+- `.\.build-venv\Scripts\python.exe -B tools\smoke_interface.py` : réussi ; construction 0,150 s et recherche disponible pendant la première indexation temporaire.
+- `.\.build-venv\Scripts\python.exe -B tools\check_interactions.py --desktop`, variante `--script --desktop`, et parcours sans option : clics ID/Référence, voisinage, doubles-clics GET/PUTE avec contenu intégral et surlignage exact, thèmes et recherche locale validés jusqu'au contrôle de grande trace. Les parcours complets échouent ensuite sur une attente de recherche locale dans la trace de 30 000 lignes (`Operation timed out`), notamment l'observation de l'état intermédiaire `positions` non vide et `search_ready` faux. Le défaut se reproduit avec les sources habituelles lors d'une exécution isolée ; les premiers essais concurrents ne sont pas retenus comme preuve de réussite. Les étapes suivantes de ces parcours ne sont donc pas validées par cette intervention.
+- `.\.build-venv\Scripts\python.exe -B tools\check_real_case.py` : réussi sur les **66 fichiers réels**, cache ouvert sans synchronisation ; ticket ligne 65169, doubles-clics GET/PUTE et surlignages exacts, traces et cache inchangés.
+- Inspection native en lecture seule via `desktop_directory()` et `discover_trace_files(directories=[...])` : Bureau résolu en `C:\Users\paulj\Desktop` ; aucun dossier `traces` présent à cet emplacement. Aucun dossier ni trace d'exploitation créé pour le contrôle.
+
+Le dernier parcours isolé `--script --desktop` atteint également la grande trace, puis échoue par `IndexError` sur l'assertion de navigation locale (liste de positions vide), au lieu du timeout des essais précédents. Il n'est pas compté comme une validation complète.
+
+Limites : nouvelle source testée sur des traces temporaires ; pas de traces réelles du Bureau disponibles. Redirection OneDrive simulée dans le test de résolution. Échec du parcours complet d'interface décrit ci-dessus encore ouvert, sans modification du moteur de recherche locale dans cette intervention. Pas de benchmark ni de reconstruction d'exécutable ; environnements, traces fournies, cache courant et copies historiques préservés.
+
 ## 2026-10-18 — Préparation et publication GitHub
 
 Demande : mettre ce projet sur GitHub.

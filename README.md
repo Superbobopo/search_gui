@@ -20,7 +20,16 @@ Le point d'entrée actif est `search_gui.py` à la racine.
 
 ## Traces et index
 
-L'application découvre les traces dans `C:/Apoteka/traces` et dans `traces/` à côté du script, notamment `traces/trace r1` et `traces/trace r2`. Les sources R1/R2 sont chargées ensemble et leur provenance est conservée. Les dossiers absents sont tolérés.
+L'application découvre les traces dans `C:/Apoteka/traces`, dans `traces/` à côté du script (notamment `traces/trace r1` et `traces/trace r2`) et dans le dossier `traces/` du Bureau Windows :
+
+```text
+Bureau/
+└── traces/
+    ├── R1/
+    └── R2/
+```
+
+Le Bureau est localisé par Windows, y compris lorsqu'il est déplacé dans OneDrive. Toutes les sources sont chargées ensemble ; les fichiers du Bureau portent les libellés `Bureau R1` et `Bureau R2`. Les fichiers homonymes restent distincts et les archives restent liées dans leur dossier robot. Les dossiers absents sont tolérés.
 
 Les traces d'exploitation restent locales et sont exclues de Git. Les courts extraits dans `tests/fixtures/` servent aux tests de compatibilité. Les encodages UTF-8 et Windows-1252 et les formats historiques sont pris en charge.
 

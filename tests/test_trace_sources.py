@@ -1,4 +1,5 @@
 import os
+import ctypes
 from pathlib import Path
 import sys
 import tempfile
@@ -7,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import search_gui as gui
 import trace_sources as sources
+from trace_store import TraceStore
 
 
 class TraceModel:
@@ -24,6 +26,10 @@ class TraceFixture(unittest.TestCase):
         self.installed = self.base / "Apoteka" / "traces"
         self.r1 = self.base / "traces" / "trace r1"
         self.r2 = self.base / "traces" / "trace r2"
+        self.desktop = self.base / "OneDrive" / "Bureau"
+        self.desktop_patch = patch.object(sources, "desktop_directory", return_value=str(self.desktop))
+        self.desktop_patch.start()
+        self.addCleanup(self.desktop_patch.stop)
         self.application_patch = patch.object(sources, "application_directory", return_value=str(self.base))
         self.application_patch.start()
         self.addCleanup(self.application_patch.stop)
@@ -50,6 +56,38 @@ class TraceFixture(unittest.TestCase):
 
 
 class TraceSourcesTests(TraceFixture):
+    def test_desktop_sources_keep_homonyms_labels_and_archive_links(self):
+        folders = (self.installed, self.r1, self.r2,
+                   self.desktop / "traces" / "R1", self.desktop / "traces" / "R2")
+        paths = [self.write(folder) for folder in folders]
+        archives = [self.write(folder, "TracOmega001.old") for folder in folders]
+        header = "Ancienne trace = C:\\Apoteka\\traces\\TracOmega001.old\n"
+        for folder in folders:
+            self.write(folder, text=header + "RefProduit=COMMON<Cr>ModBusId=123<Cr>\n")
+        self.write(folders[-1], "TracOmega.sav")
+        self.assertEqual(set(sources.discover_trace_files()), set(paths + archives))
+        self.assertTrue(sources.trace_label(paths[-2]).startswith("Bureau R1 /"))
+        self.assertTrue(sources.trace_label(paths[-1]).startswith("Bureau R2 /"))
+        store = TraceStore(self.base / "index.sqlite3")
+        store.sync(sources.discover_trace_files())
+        self.assertEqual({path for path, hits in store.search("COMMON")}, set(paths + archives))
+        self.assertEqual(store.next_files(), dict(zip(archives, paths)))
+        texts = {path: Path(path).read_text(encoding="utf-8") for path in paths + archives}
+        self.assertEqual(sources.build_next_file_map(texts), dict(zip(archives, paths)))
+
+    def test_desktop_refresh_add_remove_modbus_and_overlapping_roots(self):
+        root = self.desktop / "traces"
+        self.assertEqual(sources.discover_trace_files(), [])
+        path = self.write(root / "R1")
+        modbus = self.write(root / "R2", "TracMODBUS.txt")
+        self.write(root / "R2", "TracMODBUS.SAV")
+        self.assertEqual(set(sources.discover_trace_files()), {path, modbus})
+        self.assertEqual(sources.discover_trace_files("tracmodbus"), [modbus])
+        with patch.object(sources, "application_directory", return_value=str(self.desktop)):
+            self.assertEqual(set(sources.discover_trace_files()), {path, modbus})
+        Path(path).unlink()
+        self.assertEqual(sources.discover_trace_files(), [modbus])
+
     def test_all_sources_keep_homonyms_and_search_indexes(self):
         paths = [self.write(folder) for folder in (self.installed, self.r1, self.r2)]
         self.model._refresh_traces()
@@ -172,6 +210,31 @@ class TraceSourcesTests(TraceFixture):
     def test_overlapping_roots_do_not_load_a_file_twice(self):
         path = self.write(self.r1)
         self.assertEqual(sources.discover_trace_files(directories=[self.base / "traces", self.r1]), [path])
+
+
+class DesktopDirectoryTests(unittest.TestCase):
+    def test_windows_redirected_desktop(self):
+        redirected = os.path.join("C:" + os.sep, "Users", "Example", "OneDrive", "Bureau")
+        def locate(window, folder, token, flags, buffer):
+            self.assertEqual(folder, 0x10)
+            buffer.value = redirected
+            return 0
+        shell = Mock()
+        shell.shell32.SHGetFolderPathW.side_effect = locate
+        with patch.object(sources.os, "name", "nt"), patch.object(ctypes, "windll", shell, create=True):
+            self.assertEqual(sources.desktop_directory(), redirected)
+
+    def test_windows_lookup_failure_falls_back_to_profile(self):
+        shell = Mock()
+        for failure in (1, OSError("Unavailable")):
+            with self.subTest(failure=failure):
+                shell.shell32.SHGetFolderPathW.reset_mock(side_effect=True)
+                if isinstance(failure, OSError):
+                    shell.shell32.SHGetFolderPathW.side_effect = failure
+                else:
+                    shell.shell32.SHGetFolderPathW.return_value = failure
+                with patch.object(sources.os, "name", "nt"), patch.object(ctypes, "windll", shell, create=True):
+                    self.assertEqual(sources.desktop_directory(), os.path.join(os.path.expanduser("~"), "Desktop"))
 
 
 if __name__ == "__main__":

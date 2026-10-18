@@ -2,6 +2,7 @@
 
 --script launches the actual `python search_gui.py` command in a child process.
 A temporary sitecustomize installs the same test driver before its mainloop.
+--desktop places both robot fixtures under a temporary Desktop/traces/R1,R2.
 """
 from contextlib import ExitStack
 from pathlib import Path
@@ -33,7 +34,8 @@ def prepare():
                 f'G 14|07:00:02.0 GRIPPER PUTE 1x boîte(s): Code:{ref} {marker}\n')
     paths = {}
     for robot, fixture in [('trace r1', 'current_r1.txt'), ('trace r2', 'current_r2.txt')]:
-        directory = base / 'traces' / robot
+        directory = (base / 'Desktop' / 'traces' / robot[-2:].upper()
+                     if '--desktop' in sys.argv else base / 'traces' / robot)
         directory.mkdir(parents=True)
         text = read_trace(fixtures / fixture)
         if robot == 'trace r1':
@@ -49,8 +51,9 @@ def prepare():
         values[0] = '14|06:27:47'; values[2] = '1194'; values[6] = '1194'; values[-1] = ''
         (directory / 'TracMODBUS.txt').write_text(';'.join(values) + '\n', encoding='utf8')
     old = read_trace(fixtures / 'current_r2.txt').replace('14/10/2026', '13/10/2026').replace('14|', '13|').replace('l=48 H=21 L=47', 'l=55 H=21 L=47')
-    (base / 'traces' / 'trace r2' / 'TracOmega029.old').write_bytes(old.encode('cp1252'))
+    (Path(paths['trace r2']).parent / 'TracOmega029.old').write_bytes(old.encode('cp1252'))
     stack.enter_context(patch.object(sources, 'application_directory', return_value=str(base)))
+    stack.enter_context(patch.object(sources, 'desktop_directory', return_value=str(base / 'Desktop')))
     stack.enter_context(patch.object(sources, 'FIXED_DIRECTORY', str(base / 'absent')))
     stack.enter_context(patch.object(indexed_ui, 'TraceStore', side_effect=lambda: TraceStore(base / 'index.db')))
     # Freeze automatic sync after initial publication to test a modified file
@@ -475,7 +478,8 @@ def exercise(app, paths, script=False):
             def labels(window):
                 return ' '.join(str(w.cget('text')) for w in descendants(window) if isinstance(w, gui.tk.Label))
             pump(lambda: '1194' in labels(app.convoyage_window))
-            assert 'Local R1' in labels(app.convoyage_window) and 'Local R2' in labels(app.convoyage_window)
+            origin = 'Bureau' if '--desktop' in sys.argv else 'Local'
+            assert f'{origin} R1' in labels(app.convoyage_window) and f'{origin} R2' in labels(app.convoyage_window)
             card = next(w for w in descendants(app.convoyage_window)
                         if isinstance(w, gui.tk.Label) and '1194' in str(w.cget('text')) and w.bind('<Button-1>'))
             card.event_generate('<Button-1>')
@@ -544,7 +548,10 @@ def main():
                 '    traceback.print_exc()\n'
                 '    os._exit(2)\n', encoding='utf8')
             env = dict(os.environ, PYTHONPATH=folder)
-            result = subprocess.run([sys.executable, str(PROJECT / 'search_gui.py')], env=env, cwd=folder, timeout=60)
+            command = [sys.executable, str(PROJECT / 'search_gui.py')]
+            if '--desktop' in sys.argv:
+                command.append('--desktop')
+            result = subprocess.run(command, env=env, cwd=folder, timeout=60)
             raise SystemExit(result.returncode)
     stack, paths = prepare()
     with stack:

@@ -36,6 +36,7 @@ def main():
                 archive_gate.wait(5)
             return original_index(store, path, *args)
         with patch.object(sources, 'application_directory', return_value=folder), \
+             patch.object(sources, 'desktop_directory', return_value=str(base / 'Desktop')), \
              patch.object(sources, 'FIXED_DIRECTORY', str(base / 'absent')), \
              patch.object(TraceStore, '_index_snapshot', pause_archive), \
              patch.object(indexed_ui, 'TraceStore', side_effect=lambda: TraceStore(base / 'index.db')):

@@ -1,0 +1,18 @@
+Ancienne trace = C:\apoteka\Traces\TracOmega029.old
+creation de la trace de ... à 00:00:01 Le 14/10/2026
+
+  14|06:27:47.8 PiloteExt(1):<< <Stx>TypeREQ=INPC<Cr>DateREQ=14/10/2026 06:30:32<Cr>NomREQ=LOAD_BOX<Cr>CodePorteChg=2<Cr>CBboite=A0061574AC<Cr>RefProduit=A0061574AC<Cr>Qinitiale=1<Cr>QaPoser=1<Cr>CreatBteCOTRAL=N<Cr>SN=343272<Cr>CodeLot=261013.127<Cr>ModBusId=1194<Cr>CodeFinREQ=FinRequete<Cr><Etx>
+G 14|06:27:52.9 GRIPPER GET 1x boîte(s): Code:A0061574AC l:0 h:0 L:0mm 0g dL:-370 dW:190 face:1 $0101
+r  [Tgripper = 5,9s  rep ='OK']
+b 14|06:27:59.0 états des capteurs GR
+b 14|06:27:59.0 largLuGET=48 mm
+* 14|06:27:59.0 MAJ pos. libres
+b 14|06:27:59.0 affiche le contenu de la zone de chargement
+B 14|06:27:59.0 SAE:demande mesure boîte A0061574AC
+G 14|06:27:59.0 GRIPPER IDENTIFYPACK 1x boîte(s): Code:A0061574AC
+G 14|06:27:59.1 avant op. PacksOnGripper
+r 14|06:28:04.7 (mesures lues: l=48,1 h=20,8 L=47,1)
+r  [Tgripper = 5,6s  rep ='OK']
+B 14|06:28:04.7 Résultat de la mesure IDPK pour A0061574AC : l=48 H=21 L=47
+G 14|06:28:04.8 Rech. si  A0061574AC (lot:261013.127) est déjà sur étagère face 2 ...
+G 14|06:28:07.6 GRIPPER PUTE 1x boîte(s): Code:A0061574AC l:48 h:21 L:47mm 0g dL:399 dW:58 face:2 F32

@@ -1,0 +1,33 @@
+# Environnements et fichiers Python générés
+.venv/
+.build-venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Données locales et mesures
+/traces/
+/.benchmark/
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.sav
+
+# Builds et copies historiques locales
+build/
+dist/
+/old/
+/PythonProject1/
+
+# Configuration locale et secrets
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+Thumbs.db
+Desktop.ini

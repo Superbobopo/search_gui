@@ -1,0 +1,16 @@
+Ancienne trace = C:\apoteka\Traces\TracOmega020.old
+creation de la trace de ... à 13:38:53 Le 16/10/2026
+
+  16|13:43:36.7 PiloteExt(1):<< <Stx>TypeREQ=INPC<Cr>DateREQ=16/10/2026 13:46:23<Cr>NomREQ=LOAD_BOX<Cr>RefProduit=A0149813AA<Cr>SN=272106<Cr>CodeLot=251114.019<Cr>ModBusId=821<Cr>CodeFinREQ=FinRequete<Cr><Etx>
+G 16|13:44:48.8 GRIPPER GET 1x boîte(s): Code:A0149813AA l:0 h:0 L:0mm 0g dL:356 dW:196 face:2 $0101
+r  [Tgripper = 5,9s  rep ='OK']
+b 16|13:44:54.7 états des capteurs GR
+b 16|13:44:54.7 largLuGET=70 mm
+B 16|13:44:54.7 demande mesure boîte
+G 16|13:44:54.7 GRIPPER IDENTIFYPACK 1x boîte(s): Code:A0149813AA
+G 16|13:44:54.7 avant op. PacksOnGripper
+r 16|13:45:01.1 (mesures lues: l=70,1 h=18,1 L=98,1)
+r  [Tgripper = 5,6s  rep ='OK']
+B 16|13:45:01.1 Résultat de la mesure IDPK pour A0149813AA : l=70 H=18 L=98
+G 16|13:45:01.2 Rech. si  A0149813AA (lot:251114.019) est déjà sur étagère face 2 ...
+G 16|13:45:10.0 GRIPPER PUTE 1x boîte(s): Code:A0149813AA l:70 h:18 L:98mm 0g dL:399 dW:58 face:2 F32

@@ -12,7 +12,9 @@ Le contrôle des fichiers indexés `git -c core.whitespace=cr-at-eol diff --cach
 
 Le premier `git commit` a été refusé car aucune identité Git n'était configurée sur ce poste. `git log -4 --format=...` confirme la même identité sur les quatre commits précédents : Superbobopo et son adresse GitHub noreply. Réutilisation de cette identité par options `git -c user.name=... -c user.email=...` pour les commits de cette intervention, sans modifier la configuration globale du poste.
 
-Les traces, bases SQLite, mesures/captures `.benchmark`, environnements et builds sont exclus par `.gitignore`. Aucun exécutable reconstruit. L'envoi et sa vérification distante sont consignés après exécution.
+Publication réussie : commit `59b9a03` (« Conserver l'historique OMEGA et moderniser l'interface de recherche »), 61 fichiers. `git push origin main` a publié `e93dc94..59b9a03` sans forçage. `git ls-remote origin refs/heads/main` et `git rev-parse HEAD` ont ensuite retourné le même identifiant complet `59b9a03fa252066a045404b039092abc19597b89` ; `git status --short` était vide. Ce résultat est consigné par un commit documentaire complémentaire.
+
+Les traces, bases SQLite, mesures/captures `.benchmark`, environnements et builds sont exclus par `.gitignore`. Aucun exécutable reconstruit.
 
 ## 2026-10-19 — Convoyage intégré : onglets Parcours et Anomalies
 

@@ -12,6 +12,9 @@ from ui_theme import LIGHT, DARK, palette_for, NavigationButton, navigation_icon
 from indexed_ui import IndexedAppMixin
 from app_assets import apply_icon
 from trace_store import CHECKPOINTS
+from window_placement import show_centered_popup
+from selectable_text import make_selectable
+from ui_components import ActionButton, present_popup, font as ui_font
 import json
 
 
@@ -19,7 +22,7 @@ import json
 # Sources installées et locales, partagées par toutes les vues.
 from trace_sources import (
     discover_trace_files, trace_label, build_next_file_map,
-    path_key, same_trace_directory,
+    path_key, same_trace_directory, trace_tooltip,
 )
 from trace_parser import (
     read_trace, parse_fields, field_matches, timestamp_parts, format_ticket_fields,
@@ -77,7 +80,7 @@ class ToolTip:
         label = tk.Label(
             tw, text=self.text, justify="left",
             background="#ffffe0", relief="solid", borderwidth=1,
-            font=("Segoe UI", 9)
+            font=ui_font('meta', native=True)
         )
         label.pack(ipadx=1, ipady=1)
 
@@ -171,7 +174,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             hover_color=(LIGHT['hover'], DARK['hover']),
             text_color=(LIGHT['accent_text'], DARK['accent_text']))
         self.theme_mode = tk.StringVar(value="Système")
-        self.result_mode = tk.StringVar(value="Classique")
+        self.result_mode = tk.StringVar(value="Synthèse")
         self.search_mode = tk.StringVar(value="id")
         self._palette = palette_for(ctk.get_appearance_mode())
         self._appearance = ctk.get_appearance_mode()
@@ -227,7 +230,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         self.search_bar.grid_columnconfigure(1, weight=1)
         self.keyword_label = ctk.CTkLabel(self.search_bar, text="Recherche", font=("Segoe UI", 11))
         self.keyword_label.grid(row=0, column=0, padx=(12, 8), pady=12)
-        self.keyword = ctk.CTkEntry(self.search_bar, font=("Segoe UI", 13), corner_radius=5,
+        self.keyword = ctk.CTkEntry(self.search_bar, font=ui_font(), corner_radius=6,
                                    width=120, height=34, placeholder_text="ID, référence ou texte")
         self.keyword.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=12)
         self.tracking_keyword = self.keyword
@@ -238,20 +241,20 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         self.mode_radios = {}
         for column, (value, label) in enumerate((('id', 'ModBusId'), ('ref', 'Référence'), ('text', 'Texte'))):
             radio = ctk.CTkRadioButton(self.mode_frame, text=label, variable=self.search_mode, value=value,
-                                        command=self._choose_search_mode, font=("Segoe UI", 11),
+                                        command=self._choose_search_mode, font=ui_font(),
                                         radiobutton_width=16, radiobutton_height=16,
                                         width=82 if value != 'text' else 58,
                                         fg_color=(LIGHT['accent'], DARK['accent']),
                                         hover_color=(LIGHT['hover'], DARK['hover']))
             radio.grid(row=0, column=column, padx=2)
             self.mode_radios[value] = radio
-        self.btn_gear = ctk.CTkButton(self.search_bar, text="Filtres", width=68, height=34,
+        self.btn_gear = ActionButton(self.search_bar, text="Filtres", width=68, height=34,
                                      command=self.toggle_advanced_search, font=("Segoe UI", 11),
                                      fg_color=(LIGHT['raised'], DARK['raised']),
                                      hover_color=(LIGHT['border'], DARK['border']),
                                      text_color=(LIGHT['text'], DARK['text']))
         self.btn_gear.grid(row=0, column=3, padx=(0, 6))
-        self.btn_search = ctk.CTkButton(self.search_bar, text="Rechercher", width=96, height=34,
+        self.btn_search = ActionButton(self.search_bar, role='primary', text="Rechercher", width=96, height=34,
                                        command=self._submit_visible_search, font=("Segoe UI", 12),
                                        fg_color=(LIGHT['accent'], DARK['accent']),
                                        hover_color=(LIGHT['hover'], DARK['hover']),
@@ -266,15 +269,15 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
                          fg_color=(LIGHT['raised'], DARK['raised']),
                          hover_color=(LIGHT['border'], DARK['border']),
                          text_color=(LIGHT['text'], DARK['text']))
-        self.btn_up = ctk.CTkButton(self.action_bar, text="↑", width=30, command=self.on_up, **secondary)
-        self.btn_down = ctk.CTkButton(self.action_bar, text="↓", width=30, command=self.on_down, **secondary)
-        self.btn_compare_idpk = ctk.CTkButton(self.action_bar, text="Comparer IDPK", width=108,
+        self.btn_up = ActionButton(self.action_bar, text="↑", width=30, command=self.on_up, **secondary)
+        self.btn_down = ActionButton(self.action_bar, text="↓", width=30, command=self.on_down, **secondary)
+        self.btn_compare_idpk = ActionButton(self.action_bar, text="Comparer IDPK", width=108,
                                              command=self.compare_previous_idpk_popup, **secondary)
-        self.btn_adjacent = ctk.CTkButton(self.action_bar, text="IDs adjacents", width=108,
+        self.btn_adjacent = ActionButton(self.action_bar, text="IDs adjacents", width=108,
                                          command=self.open_adjacent_for_current_occurrence, **secondary)
-        self.btn_open_trace = ctk.CTkButton(self.action_bar, text="Ouvrir trace", width=96,
+        self.btn_open_trace = ActionButton(self.action_bar, text="Ouvrir trace", width=96,
                                            command=self.open_file_view, **secondary)
-        self.btn_erreurs = ctk.CTkButton(self.action_bar, text="Erreurs Robot", width=108,
+        self.btn_erreurs = ActionButton(self.action_bar, text="Erreurs Robot", width=108,
                                         command=self.check_errors, state='disabled', **secondary)
         for button in (self.btn_up, self.btn_down, self.btn_compare_idpk, self.btn_adjacent,
                        self.btn_open_trace, self.btn_erreurs):
@@ -286,7 +289,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         self.show_search_panel()
         self.bind('<Control-f>', self._focus_search, add='+')
         self.search_bar.bind('<Configure>', self._adapt_command_layout, add='+')
-        self.bind_all('<Map>', self._theme_new_window, add='+')
+        self.bind_class('Toplevel', '<Map>', self._theme_new_window, add='+')
         self._apply_ui_theme()
         self.after(1000, self._watch_system_theme)
 
@@ -315,10 +318,30 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         self._appearance = ctk.get_appearance_mode()
         self._palette = palette_for(self._appearance)
         configure_style(self, self._palette)
-        self._theme_window(self)
-        self._set_active_navigation()
         frame = getattr(self, 'summary_frame', None)
-        if frame is not None and frame.winfo_exists() and hasattr(self, '_render_summary'):
+        if frame is not None:
+            frame._theme_deferred = True
+        try:
+            self._theme_window(self)
+        finally:
+            if frame is not None:
+                frame._theme_deferred = False
+        panel = getattr(self, '_panels', {}).get(self._active_panel)
+        if panel is not None:
+            panel._panel_palette = tuple(self._palette.items())
+        self._set_active_navigation()
+        tracking = getattr(self, 'tracking_view', None)
+        if tracking is not None and tracking.winfo_exists():
+            tracking.apply_theme()
+        adjacent = getattr(self, 'adjacent_view', None)
+        if adjacent is not None and adjacent.winfo_exists():
+            adjacent.apply_theme()
+        for view in list(getattr(self, '_ui_views', ())):
+            if view.winfo_exists():
+                view.apply_theme()
+        frame = getattr(self, 'summary_frame', None)
+        if (self._active_panel == 'search' and frame is not None and frame.winfo_exists()
+                and hasattr(self, '_render_summary')):
             selection = getattr(self, 'selection', None)
             self._render_summary(selection.details if selection else None)
 
@@ -334,18 +357,34 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             self.after(1000, self._watch_system_theme)
 
     def _theme_new_window(self, event):
-        if isinstance(event.widget, (tk.Tk, tk.Toplevel, ctk.CTkButton, ctk.CTkRadioButton,
-                                     ctk.CTkOptionMenu)) and self._theme_pending is None:
-            # CTk constructors drain idle callbacks before their internal widgets exist.
+        widget = event.widget
+        if not isinstance(widget, (tk.Toplevel, ctk.CTkButton, ctk.CTkRadioButton, ctk.CTkOptionMenu)):
+            return
+        palette_key = tuple(self._palette.items())
+        if getattr(widget, '_mapped_theme_palette', None) == palette_key:
+            return
+        targets = getattr(self, '_theme_targets', None)
+        if targets is None:
+            self._theme_targets = targets = set()
+        targets.add(widget)
+        if self._theme_pending is None:
             self._theme_pending = self.after(1, self._theme_mapped_windows)
 
     def _theme_mapped_windows(self):
         self._theme_pending = None
         if self.winfo_exists():
-            self._theme_window(self)
-            self._set_active_navigation()
+            targets = getattr(self, '_theme_targets', set())
+            self._theme_targets = set()
+            for widget in targets:
+                if widget.winfo_exists():
+                    self._theme_window(widget)
+                    widget._mapped_theme_palette = tuple(self._palette.items())
 
     def _set_active_navigation(self):
+        state = (self._active_panel, tuple(self._palette.items()))
+        if getattr(self, '_navigation_state', None) == state:
+            return
+        self._navigation_state = state
         for name, button in (('search', self.btn_search_menu), ('tracking', self.btn_tracking_robot),
                              ('convoyage', self.btn_convoyage_menu)):
             selected = name == self._active_panel
@@ -353,6 +392,73 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
                              border_width=1 if selected else 0,
                              border_color='#35d6c6' if selected else '#294367')
             self._nav_icons[name].configure(bg='#294367' if selected else self._palette['sidebar'])
+
+    def _panel_for(self, name):
+        """Keep only the three functional panels; cancel work across every switch."""
+        panels = getattr(self, '_panels', None)
+        if panels is None:
+            self._panels = panels = {}
+        if name == self._active_panel and name in panels:
+            return panels[name], False
+        old = self._active_panel
+        tooltip = getattr(self, '_path_tooltip', None)
+        if tooltip is not None:
+            tooltip.hide_tip()
+        if old == 'search' and hasattr(self, 'selection'):
+            fields = ('selection', '_groups', '_group_index', '_selection_numbers', 'lines',
+                      'line_index', 'file_index', '_active_mode', '_last_search')
+            self._saved_search = {key: getattr(self, key) for key in fields if hasattr(self, key)}
+            self._saved_search_revision = getattr(self, '_index_content_revision', 0)
+        if old == 'tracking':
+            if getattr(self.tracking_view, '_pending', None):
+                self.tracking_view._cancel()
+                self._tracking_needs_refresh = True
+            if getattr(self, '_tracking_loading', False):
+                self._tracking_needs_refresh = True
+        if getattr(self, 'tasks', None) is not None:
+            self._suspend_summary = True
+            try:
+                self._invalidate_view()
+            finally:
+                self._suspend_summary = False
+        if old in panels:
+            previous = panels[old]
+            # A hidden panel must not reflow when the shared action bar changes height.
+            previous.place_configure(relwidth=0, relheight=0,
+                                     width=previous.winfo_width(), height=previous.winfo_height())
+        self._activate_panel(name)
+        created = name not in panels
+        if created:
+            panels[name] = ctk.CTkFrame(self.main_panel, fg_color=(LIGHT['bg'], DARK['bg']), corner_radius=0)
+            panels[name].place(x=0, y=0, relwidth=1, relheight=1)
+        for key, panel in panels.items():
+            panel._theme_deferred = key != name
+        panel = panels[name]
+        panel.place_configure(x=0, y=0, relwidth=1, relheight=1, width=0, height=0)
+        panel.lift()
+        if not created:
+            if getattr(panel, '_panel_palette', None) != tuple(self._palette.items()):
+                self._theme_window(panel)
+                panel._panel_palette = tuple(self._palette.items())
+            if name == 'search':
+                for key, value in getattr(self, '_saved_search', {}).items():
+                    setattr(self, key, value)
+                selection = getattr(self, 'selection', None)
+                if selection:
+                    self._update_context_header(selection.path, f'{self.line_index + 1}/{len(self.lines)}')
+                    self.btn_adjacent.configure(state='normal' if selection.modbus else 'disabled')
+                self._render_summary(selection.details if selection else None)
+                if (getattr(self, '_last_search', None) and (selection is None or
+                        getattr(self, '_saved_search_revision', 0) != getattr(self, '_index_content_revision', 0))):
+                    self._refresh_indexed_search()
+            elif name == 'tracking' and (getattr(self, '_tracking_needs_refresh', False)
+                    or getattr(self, '_tracking_revision', 0) != getattr(self, '_index_content_revision', 0)):
+                self._tracking_needs_refresh = False
+                if self.keyword.get().strip():
+                    self.perform_tracking_search()
+            elif name == 'convoyage':
+                self.convoyage_workspace.observe_index()
+        return panel, created
 
     def _adapt_command_layout(self, event=None):
         """Keep search and action rows usable in a narrow/high-DPI workspace."""
@@ -390,6 +496,11 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             self.keyword.insert(0, self._view_queries.get(name, ''))
         self._active_panel = name
         self._set_active_navigation()
+        if name == 'convoyage':
+            self.search_bar.pack_forget()
+        else:
+            self.search_bar.pack(side='top', fill='x', padx=12, pady=(12, 8),
+                                 before=getattr(self, 'index_status_label', self.main_panel))
         self.keyword_label.configure(text={'search': 'Recherche', 'tracking': 'Référence',
                                            'convoyage': 'ModBusId'}[name])
         self.keyword.configure(placeholder_text='ID, référence ou texte' if name == 'search' else
@@ -411,7 +522,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         if self._active_panel == 'tracking':
             return self.perform_tracking_search()
         if self._active_panel == 'convoyage':
-            return self.convoyage_action()
+            return self.convoyage_workspace.search()
         if getattr(self, 'advanced_open', False):
             return self.on_advanced_search()
         return self.perform_search()
@@ -430,16 +541,20 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             self.btn_compare_idpk.configure(state='disabled')
 
     def _focus_search(self, event=None):
-        self.keyword.focus_set()
+        if self._active_panel == 'convoyage':
+            self.convoyage_workspace.show_tab('parcours')
+            self.convoyage_workspace.entry.focus_set()
+        else:
+            self.keyword.focus_set()
         return 'break'
 
     def _install_status_widgets(self):
         self.status_frame = tk.Frame(self.workspace, bg='#f7f9fa')
         self.status_frame.pack(side='bottom', fill='x', padx=14, pady=(0, 8))
-        tk.Label(self.status_frame, textvariable=self.status, anchor='w', font=('Segoe UI', 9),
+        tk.Label(self.status_frame, textvariable=self.status, anchor='w', font=ui_font('meta', native=True),
                  bg='#f7f9fa', fg='#405060').pack(fill='x')
         self.index_status_label = tk.Label(self.workspace, textvariable=self.index_status,
-                                           anchor='w', font=('Segoe UI', 9),
+                                           anchor='w', font=ui_font('meta', native=True),
                                            bg='#f7f9fa', fg='#405060')
         self.index_status_label.pack(before=self.main_panel, fill='x', padx=14, pady=(0, 6))
         self._theme_window(self.status_frame)
@@ -450,16 +565,16 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         label = getattr(self, 'file_label', None)
         if label is None or not label.winfo_exists():
             return
-        label.configure(text='Fichier : ' + (trace_label(path) if path else 'Aucun'))
+        label.configure(text='Fichier : ' + (self._compact_trace_label(path) if path else 'Aucun'))
         self.source_label.configure(text=trace_label(path).split(' / ', 1)[0] if path else 'Aucune source')
         self.occurrence_label.configure(text=occurrence)
         self.btn_copy_path.configure(state='normal' if path else 'disabled')
-        self._path_tooltip.text = path or ''
+        self._path_tooltip.text = trace_tooltip(path) if path else ''
 
     def _copy_context_path(self):
         if self._context_path:
             self.clipboard_clear()
-            self.clipboard_append(self._context_path)
+            self.clipboard_append(os.fspath(self._context_path))
 
     def _sync_result_visibility(self):
         classic = getattr(self, 'classic_frame', None)
@@ -469,12 +584,16 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         for value, button in self.result_switch._buttons_dict.items():
             button.configure(text_color=(LIGHT['accent_text'], DARK['accent_text'])
                              if value == self.result_mode.get() else (LIGHT['text'], DARK['text']))
-        if self.result_mode.get() == 'Synthèse':
+        if getattr(self, '_result_stack', None) != (classic, summary):
             classic.pack_forget()
-            summary.pack(fill='both', expand=True)
-        else:
             summary.pack_forget()
-            classic.pack(fill='both', expand=True)
+            classic.place(x=0, y=0, relwidth=1, relheight=1)
+            summary.place(x=0, y=0, relwidth=1, relheight=1)
+            self._result_stack = (classic, summary)
+        if self.result_mode.get() == 'Synthèse':
+            summary._parent_frame.lift()
+        else:
+            classic.lift()
 
     def toggle_advanced_search(self):
         """
@@ -487,6 +606,9 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         if not hasattr(self, "advanced_open") or not self.advanced_open:
             # On pack juste AVANT self.main_panel (donc sous search_bar)
             self.advanced_frame.pack(before=self.main_panel, fill="x", padx=32, pady=(2, 6))
+            if getattr(self, 'sn_entry', None) is not None and self.sn_entry.winfo_exists():
+                self.advanced_open = True
+                return
             # On vide d’éventuels anciens widgets
             for w in self.advanced_frame.winfo_children():
                 w.destroy()
@@ -497,7 +619,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             )
             self.sn_label.pack(side="left", padx=(8, 2), pady=6)
             self.sn_entry = ctk.CTkEntry(
-                self.advanced_frame, width=140, font=("Segoe UI", 13)
+                self.advanced_frame, width=140, font=ui_font()
             )
             self.sn_entry.pack(side="left", padx=(0, 18), pady=6)
 
@@ -507,7 +629,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             )
             self.codelot_label.pack(side="left", padx=(0, 2), pady=6)
             self.codelot_entry = ctk.CTkEntry(
-                self.advanced_frame, width=140, font=("Segoe UI", 13)
+                self.advanced_frame, width=140, font=ui_font()
             )
             self.codelot_entry.pack(side="left", padx=(0, 0), pady=6)
 
@@ -525,95 +647,33 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
 
 
     def show_convoyage_tools(self):
-        if getattr(self, 'tasks', None) is not None:
-            self._invalidate_view()
-        self._activate_panel('convoyage')
-        # Efface le main_panel pour le remplir avec les outils convoyage
-        for widget in self.main_panel.winfo_children():
-            widget.destroy()
-
-        # Titre principal
-        title = tk.Label(self.main_panel, text="Outils Convoyage", font=("Segoe UI", 16, "bold"),
-                         bg="#f7f9fa", fg="#00589b")
-        title.pack(pady=(20, 10))
-
-        # Cadre regroupant les boutons convoyage
-        frame = tk.Frame(self.main_panel, bg="#f7f9fa")
-        frame.pack(pady=(10, 12))
-
-        # Bouton « Voir le parcours »
-        btn1 = ctk.CTkButton(
-            frame,
-            text="🔍 Voir le parcours d’un ModBusId",
-            corner_radius=8,
-            fg_color="#2196f3",
-            hover_color="#1565c0",
-            text_color="white",
-            font=("Segoe UI", 10, "bold"),
-            command=self.convoyage_action
-        )
-        btn1.pack(fill="x", pady=(0, 8))
-
-        # Explications sous chaque bouton
-        tk.Label(frame, text="Affiche la dernière position d’un ModBusId dans TracMODBUS.",
-                 font=("Segoe UI", 9), bg="#f7f9fa", fg="#555").pack(pady=(0, 14))
-
-        # Bouton « Lister les erreurs »
-        btn2 = ctk.CTkButton(
-            frame,
-            text="🚩 Lister les erreurs de convoyage",
-            corner_radius=8,
-            fg_color="#2196f3",
-            hover_color="#1565c0",
-            text_color="white",
-            font=("Segoe UI", 10, "bold"),
-            command=self.convoyage_errors_action
-        )
-        btn2.pack(fill="x", pady=(0, 8))
-
-        # Explications sous chaque bouton
-        tk.Label(frame, text="Liste tous les ModBusId jamais arrivés à destination dans les fichiers TracMODBUS.",
-                 font=("Segoe UI", 9), bg="#f7f9fa", fg="#b31c1c").pack()
-
-        # Bouton retour vers la recherche principale
-        ctk.CTkButton(
-            self.main_panel,
-            text="← Retour à la recherche",
-            corner_radius=8,
-            fg_color="#2196f3",
-            hover_color="#1565c0",
-            text_color="white",
-            font=("Segoe UI", 10, "bold"),
-            command=self.show_search_panel
-        ).pack(pady=8)
-
-        self.keyword.unbind('<Return>')  # Retire l'ancien comportement
-        self.keyword.bind('<Return>', self._convoyage_entry_enter)
-        self._theme_window(self.main_panel)
-
+        panel, created = self._panel_for('convoyage')
+        if not created:
+            return
+        from convoyage_workspace import ConvoyageWorkspace
+        self.convoyage_workspace = ConvoyageWorkspace(panel, self)
+        self.convoyage_workspace.pack(fill='both', expand=True)
 
     def show_search_panel(self):
-        if getattr(self, 'tasks', None) is not None:
-            self._invalidate_view()
-        self._activate_panel('search')
-        for widget in self.main_panel.winfo_children():
-            widget.destroy()
-        header = ctk.CTkFrame(self.main_panel, fg_color='transparent')
+        panel, created = self._panel_for('search')
+        if not created:
+            return
+        header = ctk.CTkFrame(panel, fg_color='transparent')
         header.pack(fill='x', pady=(0, 8))
         header.grid_columnconfigure(2, weight=1)
         self.source_label = ctk.CTkLabel(header, text='Aucune source', corner_radius=5,
                                         fg_color=(LIGHT['raised'], DARK['raised']),
-                                        font=('Segoe UI', 10, 'bold'), padx=8)
+                                        font=ui_font('meta', True), padx=8)
         self.source_label.grid(row=0, column=0, sticky='w', padx=(0, 8))
-        self.btn_prev_file = ttk.Button(header, text='‹', width=2, command=self.on_left)
+        self.btn_prev_file = ActionButton(header, text='‹', width=32, command=self.on_left)
         self.btn_prev_file.grid(row=0, column=1)
-        self.file_label = tk.Label(header, text='Fichier : Aucun', font=('Segoe UI', 11, 'bold'),
+        self.file_label = tk.Label(header, text='Fichier : Aucun', font=ui_font(bold=True, native=True),
                                    bg='#f7f9fa', fg='#405060', anchor='w', wraplength=460)
         self.file_label.grid(row=0, column=2, sticky='ew', padx=8)
         self._path_tooltip = ToolTip(self.file_label, '')
-        self.btn_next_file = ttk.Button(header, text='›', width=2, command=self.on_right)
+        self.btn_next_file = ActionButton(header, text='›', width=32, command=self.on_right)
         self.btn_next_file.grid(row=0, column=3)
-        self.btn_copy_path = ctk.CTkButton(header, text='Copier chemin', width=94, height=28,
+        self.btn_copy_path = ActionButton(header, text='Copier chemin', width=94, height=28,
                                           command=self._copy_context_path, state='disabled',
                                           fg_color=(LIGHT['raised'], DARK['raised']),
                                           hover_color=(LIGHT['border'], DARK['border']),
@@ -625,7 +685,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         self.result_switch = ctk.CTkSegmentedButton(header, values=['Classique', 'Synthèse'],
                                                     variable=self.result_mode,
                                                     command=self._change_result_mode,
-                                                    font=('Segoe UI', 11), height=28,
+                                                    font=ui_font(), height=32, corner_radius=6,
                                                     fg_color=(LIGHT['raised'], DARK['raised']),
                                                     selected_color=(LIGHT['accent'], DARK['accent']),
                                                     selected_hover_color=(LIGHT['hover'], DARK['hover']),
@@ -633,7 +693,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
                                                     unselected_hover_color=(LIGHT['border'], DARK['border']),
                                                     text_color=(LIGHT['text'], DARK['text']))
         self.result_switch.grid(row=1, column=3, columnspan=2, sticky='e', pady=(5, 0))
-        body = ctk.CTkFrame(self.main_panel, fg_color='transparent', corner_radius=0)
+        body = ctk.CTkFrame(panel, fg_color='transparent', corner_radius=0)
         body.pack(fill='both', expand=True)
         self.classic_frame = tk.Frame(body, bg='#ffffff', bd=1, relief='groove',
                                       highlightthickness=1, highlightbackground='#cfd8dc')
@@ -648,7 +708,8 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         self.txt.tag_bind('clickable_refprod', '<Button-1>', self.on_click_refprod)
         self._sync_result_visibility()
         self.btn_erreurs.configure(state='normal' if getattr(self, 'files_loaded', False) else 'disabled')
-        self._theme_window(self.main_panel)
+        self._theme_window(panel)
+        panel._panel_palette = tuple(self._palette.items())
         if hasattr(self, '_render_summary'):
             self._render_summary(None)
 
@@ -1347,22 +1408,17 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             self.file_index = self.file_list.index(current_file)
 
     def show_tracking_robot_panel(self):
-        if getattr(self, 'tasks', None) is not None:
-            self._invalidate_view()
-        self._activate_panel('tracking')
-        for widget in self.main_panel.winfo_children():
-            widget.destroy()
-        ctk.CTkLabel(self.main_panel, text='Suivi des dépôts par référence',
-                     font=('Segoe UI', 16, 'bold'), anchor='w').pack(fill='x', pady=(6, 12))
-        frame = tk.Frame(self.main_panel, bg='#ffffff', bd=1, relief='flat')
-        frame.pack(fill='both', expand=True)
-        self.tracking_txt = scrolledtext.ScrolledText(frame, wrap='word', font=('Consolas', 11),
-                                                       bg='#fafbfc', borderwidth=0)
-        self.tracking_txt.pack(fill='both', expand=True, padx=10, pady=10)
-        self._theme_window(self.main_panel)
+        panel, created = self._panel_for('tracking')
+        if not created:
+            return
+        from tracking_view import TrackingView
+        self.tracking_view = TrackingView(panel, self)
+        self.tracking_view.pack(fill='both', expand=True)
+        self._theme_window(panel)
+        panel._panel_palette = tuple(self._palette.items())
 
     def perform_tracking_search(self):
-        if getattr(self, 'store', None) is not None:
+        if getattr(self, 'tasks', None) is not None or getattr(self, 'store', None) is not None:
             return self._indexed_tracking()
         import re
         ref = self.tracking_keyword.get().strip()
@@ -1424,837 +1480,63 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
 
 
     def _render_robot_errors(self, errors, files_checked):
-        import tkinter as tk
-
-        WIDTH = 500  # Largeur de base de la popup
-
+        from robot_errors_view import RobotErrorsView
         top = tk.Toplevel(self)
-        apply_icon(top)
-        top.title("Vérification erreurs Robot")
-        top.resizable(True, True)
-        top.geometry(f"{WIDTH}x400")
-
-        frame = tk.Frame(top, bg="#f7fafd")
-        frame.pack(fill="both", expand=True, padx=18, pady=18)
-
-        # --- Titre qui s'ajuste dynamiquement ---
-        titre = tk.Label(
-            frame,
-            text="🤖 Résultat de la vérification des erreurs Robot",
-            font=("Arial", 16, "bold"),
-            fg="#00589b",
-            bg="#f7fafd",
-            wraplength=WIDTH - 30,
-            justify="left"
-        )
-        titre.pack(pady=(0, 12), fill="x", expand=False)
-
-        def update_title_wrap(event):
-            titre.config(wraplength=event.width - 30)
-
-        frame.bind("<Configure>", update_title_wrap)
-
-        if errors:
-            # --- Encadré scrollable pour les erreurs ---
-            container = tk.Frame(frame, bg="#ffeaea", bd=2, relief="groove")
-            container.pack(fill="both", expand=True, pady=(0, 0))
-
-            scroll_canvas = tk.Canvas(container, bg="#ffeaea", highlightthickness=0, bd=0)
-            scroll_canvas.pack(side="left", fill="both", expand=True)
-            scrollbar = tk.Scrollbar(container, orient="vertical", command=scroll_canvas.yview)
-            scrollbar.pack(side="right", fill="y")
-            scroll_canvas.configure(yscrollcommand=scrollbar.set)
-
-            inner_frame = tk.Frame(scroll_canvas, bg="#ffeaea")
-            window_id = scroll_canvas.create_window((0, 0), window=inner_frame, anchor="nw")
-
-            label_refs = []
-            # Ajout des labels dans inner_frame
-            def add_error(err):
-                dateheure = ""
-                if err.get("date") or err.get("heure"):
-                    dateheure = f" | {err.get('date', '')} {err.get('heure', '')}".strip()
-                err_label = tk.Label(
-                    inner_frame,
-                    text=f"❌ Fichier: {err['file']} | ModBusId={err['modbus_id']} | RefProduit={err['ref']}{dateheure} non prise par GRIPPER GET",
-                    font=("Consolas", 11, "bold"),
-                    fg="#b71c1c",
-                    bg="#ffeaea",
-                    anchor="w",
-                    justify="left",
-                    wraplength=WIDTH - 40,
-                    cursor="hand2"
-                )
-                err_label.pack(fill="x", padx=8, pady=2)
-                # binding pour naviguer vers le fichier / ref / popup
-                err_label.bind(
-                    "<Button-1>",
-                    lambda e,
-                           fname=err['filepath'],
-                           mb=err['modbus_id'],
-                           rp=err['ref'],
-                           number=err.get('number'):
-                    self._on_error_line_click(fname, mb, rp, number)
-                )
-                label_refs.append(err_label)
-
-            self._render_items(errors, add_error, top)
-
-            # affichage direct
-            scroll_canvas.update_idletasks()
-            scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
-
-            # Ajuste wrap + zone scroll au resize
-            def on_frame_configure(event):
-                scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
-                scroll_canvas.itemconfig(window_id, width=scroll_canvas.winfo_width())
-                for lbl in label_refs:
-                    lbl.config(wraplength=max(scroll_canvas.winfo_width() - 32, 60))
-
-            inner_frame.bind("<Configure>", on_frame_configure)
-
-            # Molette souris
-            def _on_mousewheel(event):
-                scroll_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-            def _on_mousewheel_linux(event):
-                if event.num == 4:
-                    scroll_canvas.yview_scroll(-1, "units")
-                elif event.num == 5:
-                    scroll_canvas.yview_scroll(1, "units")
-
-            def bind_mousewheel(event):
-                scroll_canvas.bind_all("<MouseWheel>", _on_mousewheel)
-                scroll_canvas.bind_all("<Button-4>", _on_mousewheel_linux)
-                scroll_canvas.bind_all("<Button-5>", _on_mousewheel_linux)
-
-            def unbind_mousewheel(event):
-                scroll_canvas.unbind_all("<MouseWheel>")
-                scroll_canvas.unbind_all("<Button-4>")
-                scroll_canvas.unbind_all("<Button-5>")
-
-            scroll_canvas.bind("<Enter>", bind_mousewheel)
-            scroll_canvas.bind("<Leave>", unbind_mousewheel)
-
-        else:
-            ok = tk.Label(
-                frame,
-                text="✅ Aucun problème détecté sur tous les fichiers analysés.",
-                font=("Arial", 13, "bold"),
-                fg="#228B22",
-                bg="#f7fafd"
-            )
-            ok.pack(pady=12)
-
-        details = tk.Label(
-            frame,
-            text=f"{len(files_checked)} fichier(s) analysé(s).",
-            font=("Arial", 10, "italic"),
-            fg="#606060",
-            bg="#f7fafd",
-            wraplength=WIDTH - 30,
-            justify="left"
-        )
-        details.pack(pady=(4, 0), fill="x", expand=False)
-
-        note = tk.Label(
-            frame,
-            text="Les erreurs signalent les ModBusId/RefProduit en attente sur T5 et jamais pris GRIPPER GET ($0101).",
-            font=("Arial", 10, "italic"),
-            fg="#8a6d3b",
-            bg="#f7fafd",
-            wraplength=WIDTH - 30,
-            justify="left"
-        )
-        note.pack(pady=(12, 0), fill="x", expand=False)
-
-        top.lift()
-
+        top.title('Vérification erreurs Robot')
+        top.robot_errors_view = RobotErrorsView(top, self, errors)
+        top.robot_errors_view.pack(fill='both', expand=True)
+        present_popup(top, self)
 
     def _render_indexed_convoyage(self, ref, geometry_override, all_results, indexed_steps):
-        if not hasattr(self, 'convoyage_window'):
-            self.convoyage_window = None
-        def make_fully_clickable(frame, callback):
-            frame.bind('<Button-1>', callback)
-            for child in frame.winfo_children():
-                child.bind('<Button-1>', callback)
+        from convoyage_errors_view import ConvoyageErrorsView
         if not all_results:
-            tk.messagebox.showinfo("Résultat",
-                                   f"Aucune position trouvée pour la référence {ref} dans le convoyage (tous fichiers).")
+            messagebox.showinfo('Résultat', f'Aucune position trouvée pour le ModBusId {ref}.')
             return
-
-        # ==== Création / update de la fenêtre convoyage stylée ====
-        if self.convoyage_window and tk.Toplevel.winfo_exists(self.convoyage_window):
-            top = self.convoyage_window
-            for widget in top.winfo_children():
-                widget.destroy()
-            # ← ajoute ça ici
-            top.update_idletasks()
-            top.geometry("")
+        items = [(item['_filepath'], str(ref)) for item in all_results]
+        top = getattr(self, 'convoyage_window', None)
+        if top is None or not top.winfo_exists():
+            top = self.convoyage_window = tk.Toplevel(self)
+            top.title(f'Convoyage - Résultats pour la référence {ref}')
+            view = top.convoyage_errors_view = ConvoyageErrorsView(top, self, items)
+            view.pack(fill='both', expand=True)
+            present_popup(top, self)
         else:
-            self.convoyage_window = tk.Toplevel(self)
-            apply_icon(self.convoyage_window)
-            top = self.convoyage_window
-            top.title(f"Convoyage - Résultats pour la référence {ref}")
-            self.convoyage_window.resizable(True, True)
-
-        frame = tk.Frame(top, bg="#fff8f0")
-        frame.pack(fill="both", expand=True, padx=18, pady=18)
-        frame.update_idletasks()
-        top.update_idletasks()
-        top.minsize(0, 0)
-        top.geometry("")
-
-        label_refs = []
-
-        def add_label(*args, **kwargs):
-            lbl = tk.Label(*args, **kwargs)
-            label_refs.append(lbl)
-            return lbl
-
-        def show_convoyage_steps_in_bloc(container, ref, filepath, geometry_override=None):
-            filename = trace_label(filepath)
-            for w in container.winfo_children():
-                w.destroy()
-
-            titre = tk.Label(
-                container,
-                text=f"📦 Parcours détaillé du ModBusId {ref} dans {filename}",
-                font=("Segoe UI", 13, "bold"),
-                fg="#1a5276",
-                bg="#f5fafd"
-            )
-            titre.pack(anchor="w", pady=(0, 10), padx=10)
-
-            headers = ["Horodatage", "Checkpoint", "État", "Fichier"]
-            col_widths = [15, 60, 12, 22]  # Ajuste si besoin
-
-            # --- Crée le tableau (une frame pour grid)
-            table = tk.Frame(container, bg="#e3f2fd")
-            table.pack(anchor="center", padx=10, pady=3, fill="x")
-
-            # --- En-têtes
-            for i, titre_col in enumerate(headers):
-                tk.Label(
-                    table, text=titre_col, font=("Consolas", 10, "bold"),
-                    bg="#d1e3f5", anchor="w", width=col_widths[i], relief="flat"
-                ).grid(row=0, column=i, sticky="nsew", padx=1, pady=1)
-
-            # --- Données
-            steps = [step for step in indexed_steps if step['file'] == trace_label(filepath)]
-            for r, etape in enumerate(steps):
-                tk.Label(
-                    table, text=etape['horodatage'], bg="#e3f2fd",
-                    font=("Consolas", 10), anchor="w", width=col_widths[0]
-                ).grid(row=r + 1, column=0, sticky="nsew", padx=1, pady=1)
-                tk.Label(
-                    table, text=etape['checkpoint'], bg="#e3f2fd",
-                    font=("Consolas", 10), anchor="w", width=col_widths[1]
-                ).grid(row=r + 1, column=1, sticky="nsew", padx=1, pady=1)
-                tk.Label(
-                    table, text=etape['etat'], bg="#e3f2fd",
-                    font=("Consolas", 10, "bold"),
-                    fg="#055300" if etape['etat'] == "Présent" else "#d02b20",
-                    anchor="w", width=col_widths[2]
-                ).grid(row=r + 1, column=2, sticky="nsew", padx=1, pady=1)
-                tk.Label(
-                    table, text=etape['file'], bg="#e3f2fd",
-                    font=("Consolas", 10), anchor="w", width=col_widths[3]
-                ).grid(row=r + 1, column=3, sticky="nsew", padx=1, pady=1)
-
-            for i in range(4):
-                table.grid_columnconfigure(i, weight=1)
-
-            top = self.convoyage_window
-            top.update_idletasks()
-            top.geometry("")
-
-            def revenir_resume():
-                geo = top.geometry()  # ex : '730x410+622+246'
-                top.destroy()
-                import re
-                m = re.match(r"\d+x\d+\+(-?\d+)\+(-?\d+)", geo)
-                if m:
-                    x, y = m.group(1), m.group(2)
-                    # Lance la fenêtre résumé, elle prendra sa taille naturelle, mais on lui applique la position
-                    self.convoyage_action(ref, geometry_override=f"+{x}+{y}")
-                else:
-                    # fallback : position auto
-                    self.convoyage_action(ref, geometry_override=None)
-
-            # --- Bouton retour
-            # On récupère la géométrie de la fenêtre actuelle pour la conserver !
-            tk.Button(
-                container, text="Revenir au résumé", font=("Segoe UI", 10, "bold"),
-                command=revenir_resume
-            ).pack(pady=12)
-
-
-        # Ajoute un bloc pour chaque résultat (1 par fichier)
-        def add_result(res):
-            filepath = res['_filepath']
-            filename = trace_label(filepath)
-            bloc = tk.Frame(frame, bd=2, relief="groove", bg="#f5fafd")
-            bloc.pack(fill="x", expand=True, padx=10, pady=12)
-
-            titre = add_label(
-                bloc,
-                text=f"📦 Fichier : {filename}",
-                font=("Arial", 13, "bold"),
-                fg="#00589b",
-                bg="#f5fafd",
-                wraplength=700,
-                justify="left"
-            )
-            titre.pack(anchor="w", pady=(2, 7), fill="x", expand=True)
-
-            def show_details_in_this_bloc(event=None, container=bloc, ref=ref, filepath=filepath):
-                # Récupère la position actuelle de la fenêtre
-                top = self.convoyage_window
-                geo = top.geometry()
-                show_convoyage_steps_in_bloc(container, ref, filepath, geometry_override=geo)
-
-            if '_checkpoint_attente' in res:
-                last_pos = res.get('_last_positive')
-                if last_pos:
-                    cadre_positif = tk.Frame(bloc, bd=1, relief="groove", bg="#e6ffe6")
-                    cadre_positif.pack(fill="x", expand=True, padx=12, pady=(0, 7))
-                    cadre_positif.config(cursor="hand2")
-                    # Ajout des labels
-                    lbl = add_label(
-                        cadre_positif,
-                        text="Dernière position positive connue :",
-                        font=("Arial", 11, "underline"),
-                        bg="#e6ffe6",
-                        wraplength=660,
-                        justify="left"
-                    )
-                    lbl.pack(anchor="w", padx=8, pady=(4, 0), fill="x", expand=True)
-                    horo = add_label(
-                        cadre_positif,
-                        text=f"HORODATAGE: {last_pos['horodatage']}",
-                        font=("Arial", 11),
-                        bg="#e6ffe6",
-                        wraplength=660,
-                        justify="left"
-                    )
-                    horo.pack(anchor="w", padx=8, fill="x", expand=True)
-                    chkpt = add_label(
-                        cadre_positif,
-                        text=f"{last_pos['checkpoint']}: {ref}",
-                        font=("Arial", 11, "underline"),
-                        fg="green",
-                        bg="#e6ffe6",
-                        wraplength=660,
-                        justify="left"
-                    )
-                    chkpt.pack(anchor="w", padx=8, pady=(0, 4), fill="x", expand=True)
-                    # CLIC PARTOUT SUR LE CARD
-                    make_fully_clickable(cadre_positif, lambda event, container=bloc, ref=ref, filepath=filepath: show_details_in_this_bloc(event, container, ref, filepath))
-
-
-                checkpoint = res['_checkpoint_attente']
-                val = res.get(checkpoint, f"-{ref}")
-                horodatage = res.get('HORODATAGE', '')
-                cadre_attente = tk.Frame(bloc, bd=1, relief="groove", bg="#ffe6e6")
-                cadre_attente.pack(fill="x", expand=True, padx=12, pady=(0, 7))
-                cadre_attente.config(cursor="hand2")
-                horo_a = add_label(
-                    cadre_attente,
-                    text=f"HORODATAGE: {horodatage}",
-                    font=("Arial", 11),
-                    bg="#ffe6e6",
-                    wraplength=660,
-                    justify="left"
-                )
-                horo_a.pack(anchor="w", padx=8, pady=(4, 0), fill="x", expand=True)
-                chkpt_a = add_label(
-                    cadre_attente,
-                    text=f"{checkpoint}: {val} (en attente)",
-                    font=("Arial", 11, "underline"),
-                    fg="red",
-                    bg="#ffe6e6",
-                    wraplength=660,
-                    justify="left"
-                )
-                chkpt_a.pack(anchor="w", padx=8, pady=(0, 4), fill="x", expand=True)
-                # CLIC PARTOUT SUR LE CARD
-                make_fully_clickable(cadre_positif, lambda event, container=bloc, ref=ref, filepath=filepath: show_details_in_this_bloc(event, container, ref, filepath))
-
-
-
-            elif '_checkpoint_actuel' in res:
-                checkpoint = res['_checkpoint_actuel']
-                val = res.get(checkpoint, ref)
-                horodatage = res.get('HORODATAGE', '')
-                cadre_positif = tk.Frame(bloc, bd=1, relief="groove", bg="#e6ffe6")
-                cadre_positif.pack(fill="x", expand=True, padx=12, pady=(0, 7))
-                cadre_positif.config(cursor="hand2")
-                horo = add_label(
-                    cadre_positif,
-                    text=f"HORODATAGE: {horodatage}",
-                    font=("Arial", 11),
-                    bg="#e6ffe6",
-                    wraplength=660,
-                    justify="left"
-                )
-                horo.pack(anchor="w", padx=8, pady=(4, 0), fill="x", expand=True)
-                chkpt = add_label(
-                    cadre_positif,
-                    text=f"{checkpoint}: {val} (dernière position connue)",
-                    font=("Arial", 11, "underline"),
-                    fg="green",
-                    bg="#e6ffe6",
-                    wraplength=660,
-                    justify="left"
-                )
-                chkpt.pack(anchor="w", padx=8, pady=(0, 4), fill="x", expand=True)
-                # CLIC PARTOUT SUR LE CARD
-                make_fully_clickable(cadre_positif, lambda event, container=bloc, ref=ref,
-                                                           filepath=filepath: show_details_in_this_bloc(event,
-                                                                                                        container, ref,
-                                                                                                        filepath))
-
-        self._render_items(all_results, add_result, top)
-
-        # Note finale globale
-        note = add_label(
-            frame,
-            text="Pour plus de détails, vérifiez aussi l’historique dans les fichiers TracModbus.",
-            font=("Arial", 10, "italic"),
-            fg="#8a6d3b",
-            bg="#fff8f0",
-            wraplength=700,
-            justify="left"
-        )
-        note.pack(pady=(16, 2), fill="x", expand=True)
-
-        def update_all_wrap(event):
-            new_width = event.width - 40
-            for lbl in label_refs:
-                try:
-                    lbl.config(wraplength=max(new_width, 80))
-                except tk.TclError:
-                    pass
-
-        frame.bind("<Configure>", update_all_wrap)
-
-        if geometry_override:
-            self.convoyage_window.geometry(geometry_override)
-        else:
-            # Si on affiche le résumé (et pas les détails), on veut toujours forcer la taille auto compacte
-            self.convoyage_window.update_idletasks()
-            self.convoyage_window.geometry("")  # Force la taille minimale du contenu
-
-        self.convoyage_window.lift()
-
+            view = top.convoyage_errors_view
+            view.reset_items(items)
+        view.title.configure(text='Parcours de convoyage')
+        view.summary.configure(text=f'ModBusId {ref} · R1/R2 · {len(items)} trace(s)')
+        view.list_heading.configure(text='TRACES DISPONIBLES')
+        top.lift()
 
     def _render_convoyage_errors(self, erreurs_modbus):
-        WIDTH = 500
-
+        from convoyage_errors_view import ConvoyageErrorsView
         top = tk.Toplevel(self)
-        apply_icon(top)
-        top.title("Erreurs Convoyage")
-        top.resizable(True, True)
-        top.geometry(f"{WIDTH}x500")
+        top.title('Erreurs Convoyage')
+        view = top.convoyage_errors_view = ConvoyageErrorsView(top, self, erreurs_modbus)
+        view.pack(fill='both', expand=True)
+        present_popup(top, self)
 
-        frame = tk.Frame(top, bg="#fff8f0")
-        frame.pack(fill="both", expand=True, padx=18, pady=18)
-
-        titre = tk.Label(
-            frame,
-            text="🚩 Anomalies de Convoyage",
-            font=("Arial", 16, "bold"),
-            fg="#C81B16",
-            bg="#fff8f0"
-        )
-        titre.pack(pady=(0, 12))
-
-        if erreurs_modbus:
-            expl = tk.Label(
-                frame,
-                text="Certains ModBusId ne sont jamais arrivés à destination (T5/R1 ou T5/R2) :",
-                font=("Arial", 12),
-                fg="#2a2a2a",
-                bg="#fff8f0",
-                wraplength=480,
-                justify="left"
-            )
-            expl.pack(anchor="w", padx=10, fill="x", expand=True)
-
-            def update_wrap(event):
-                expl.config(wraplength=event.width - 40)
-
-            frame.bind("<Configure>", update_wrap)
-            top.bind("<Configure>", update_wrap)
-
-            # Bloc en surbrillance, SCROLLABLE
-            box = tk.Frame(frame, bd=2, relief="groove", bg="#ffebee")
-
-            if len(erreurs_modbus) <= 2:
-                box.pack(fill="x", expand=False, pady=16, padx=12)
-            else:
-                box.pack(fill="both", expand=True, pady=16, padx=12)
-
-            canvas = tk.Canvas(box, bg="#ffebee", highlightthickness=0)
-            scrollbar = tk.Scrollbar(box, orient="vertical", command=canvas.yview)
-            inner_frame = tk.Frame(canvas, bg="#ffebee")
-
-            # Ajuste la hauteur du canvas selon le nombre de résultats (1 ligne ≈ 52px, ajuste si besoin)
-            if len(erreurs_modbus) == 1:
-                canvas.config(height=52)
-            elif len(erreurs_modbus) == 2:
-                canvas.config(height=96)
-            # sinon ne rien faire, il prendra la taille par défaut et scrollera si besoin
-
-            canvas.configure(yscrollcommand=scrollbar.set)
-            scrollbar.pack(side="right", fill="y")
-            canvas.pack(side="left", fill="both", expand=True)
-            window = canvas.create_window((0, 0), window=inner_frame, anchor="nw")
-
-            label_refs = []
-            def add_convoyage_error(item):
-                filepath, mb = item
-                filename = trace_label(filepath)
-                lbl = tk.Label(
-                    inner_frame,
-                    text=f"🡺  {filename}   |   ModBusId {mb}",
-                    font=("Segoe UI", 12, "bold"),
-                    fg="#1960D6",
-                    bg="#e8f0fe",
-                    anchor="w",
-                    cursor="hand2",
-                    padx=12, pady=5,
-                    relief="flat",
-                    borderwidth=1,
-                    wraplength=WIDTH - 60
-                )
-                lbl.pack(fill="x", padx=8, pady=4, ipady=2)
-                label_refs.append(lbl)
-
-                def on_enter(e): e.widget.configure(bg="#d1e0ff", fg="#0b3d91")
-
-                def on_leave(e): e.widget.configure(bg="#e8f0fe", fg="#1960D6")
-
-                lbl.bind("<Enter>", on_enter)
-                lbl.bind("<Leave>", on_leave)
-
-                def on_click_modbus(event, mbid=mb, fname=filepath):
-                    parent = event.widget.winfo_toplevel()
-                    parent.update_idletasks()
-                    parent_x = parent.winfo_rootx()
-                    parent_y = parent.winfo_rooty()
-                    parent_w = parent.winfo_width()
-                    parent_h = parent.winfo_height()
-                    popup_x = parent_x
-                    popup_y = parent_y + parent_h + 16
-                    self.convoyage_action(mbid, geometry_override=f"+{popup_x}+{popup_y}", only_filepath=fname)
-
-                lbl.bind("<Button-1>", on_click_modbus)
-
-            self._render_items(erreurs_modbus, add_convoyage_error, top)
-
-            # Ajuste scroll + wrap dynamique
-            def on_frame_configure(event):
-                canvas.configure(scrollregion=canvas.bbox("all"))
-                canvas.itemconfig(window, width=canvas.winfo_width())
-                for lbl in label_refs:
-                    lbl.config(wraplength=max(canvas.winfo_width() - 32, 60))
-
-            inner_frame.bind("<Configure>", on_frame_configure)
-
-            # >>> Correction affichage direct :
-            inner_frame.update_idletasks()
-            on_frame_configure(None)
-            # Hack ultime : forcer le recalc du scrollregion après un délai
-            top.after(200, lambda: on_frame_configure(None))
-
-            # Molette souris intuitive
-            def _on_mousewheel(event):
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-            def _on_mousewheel_linux(event):
-                if event.num == 4:
-                    canvas.yview_scroll(-1, "units")
-                elif event.num == 5:
-                    canvas.yview_scroll(1, "units")
-
-            def bind_mousewheel(event):
-                canvas.bind_all("<MouseWheel>", _on_mousewheel)
-                canvas.bind_all("<Button-4>", _on_mousewheel_linux)
-                canvas.bind_all("<Button-5>", _on_mousewheel_linux)
-
-            def unbind_mousewheel(event):
-                canvas.unbind_all("<MouseWheel>")
-                canvas.unbind_all("<Button-4>")
-                canvas.unbind_all("<Button-5>")
-
-            canvas.bind("<Enter>", bind_mousewheel)
-            canvas.bind("<Leave>", unbind_mousewheel)
-
-            note = tk.Label(
-                frame,
-                text="Chaque ModBusId est contrôlé uniquement dans son propre fichier.",
-                font=("Arial", 10, "italic"),
-                fg="#8a6d3b",
-                bg="#fff8f0"
-            )
-            note.pack(pady=(12, 0))
-            # --- Ajustement taille fenêtre ---
-            top.update_idletasks()
-            if len(erreurs_modbus) <= 1:
-                top.geometry("")
-
-        else:
-            ok = tk.Label(
-                frame,
-                text="✅ Toutes les références sont bien arrivées à destination (dans chaque fichier) !",
-                font=("Arial", 14, "bold"),
-                fg="#228B22",
-                bg="#fff8f0"
-            )
-            ok.pack(pady=16)
-            # --- Ajustement taille fenêtre ---
-            top.update_idletasks()
-            top.geometry("")
-
-
-    def _render_indexed_convoyage_recap(self, ref, recap):
-        checkpoint_indices = list(CHECKPOINTS)
-        checkpoints = CHECKPOINTS
+    def _render_indexed_convoyage_recap(self, ref, recap, paths=()):
+        from diagnostic_views import ConvoyageRecapView
         top = tk.Toplevel(self)
-        apply_icon(top)
-        top.title(f"Parcours détaillé du ModBusId {ref}")
-        top.geometry("850x550")
-        top.configure(bg="#f4f6fb")
-        frame = tk.Frame(top, bg="#f4f6fb")
-        frame.pack(fill='both', expand=True, padx=16, pady=10)
+        top.title(f'Parcours détaillé du ModBusId {ref}')
+        top.diagnostic_view = ConvoyageRecapView(top, self, ref, recap, paths)
+        top.diagnostic_view.pack(fill='both', expand=True)
+        present_popup(top, self, 900, 700)
 
-        tk.Label(frame, text=f"Parcours détaillé du ModBusId {ref} :", font=("Segoe UI", 13, "bold"),
-                 bg="#f4f6fb", fg="#1a5276").pack(anchor="w", pady=(0, 10))
-
-        # Entête : Horodatage d'abord
-        entete = tk.Frame(frame, bg="#d1e3f5")
-        entete.pack(fill="x", pady=(0, 1))
-        for i, titre in enumerate(["Horodatage", "Checkpoint", "État", "Fichier"]):
-            tk.Label(entete, text=titre, font=("Segoe UI", 10, "bold"), bg="#d1e3f5", anchor="w").grid(row=0, column=i,
-                                                                                                       sticky="ew",
-                                                                                                       padx=6, pady=3)
-
-        for col in checkpoint_indices:
-            etat = recap[col]["etat"]
-            if not etat:
-                continue
-            row = tk.Frame(frame, bg="#e3f2fd")
-            row.pack(fill="x", pady=1)
-            tk.Label(row, text=recap[col]["horodatage"], bg="#e3f2fd", font=("Consolas", 10), anchor="w",
-                     width=17).grid(row=0, column=0, sticky="ew", padx=6)
-            tk.Label(row, text=checkpoints[col], bg="#e3f2fd", font=("Segoe UI", 10), anchor="w", width=38).grid(row=0,
-                                                                                                                 column=1,
-                                                                                                                 sticky="ew",
-                                                                                                                 padx=6)
-            tk.Label(row, text=etat, bg="#e3f2fd", font=("Segoe UI", 10, "bold"),
-                     fg="#055300" if etat == "Présent" else "#d02b20", anchor="w", width=15).grid(row=0, column=2,
-                                                                                                  sticky="ew", padx=6)
-            tk.Label(row, text=recap[col]["file"], bg="#e3f2fd", font=("Consolas", 10), anchor="w", width=20).grid(
-                row=0, column=3, sticky="ew", padx=6)
-
-        tk.Button(frame, text="Fermer", command=top.destroy, bg="#dbeafe", font=("Segoe UI", 10, "bold")).pack(pady=12)
-
-
-    def _render_indexed_comparison(self, refprod, pair):
-        first, second = pair
-        current_file, next_file = first['path'], second['path']
-        idpk_line, idpk_line_next = first['text'], second['text']
-        dims_current, dims_prev = json.loads(first['dims']), json.loads(second['dims'])
-        # Dates déjà indexées : aucun parcours de trace pour cette fenêtre.
-        def file_date(event):
-            stamp = self._file_metadata.get(event['path'], {}).get('end', event['time'])
-            return datetime.datetime.fromtimestamp(stamp).strftime("%d/%m/%Y %H:%M")
-        date_current, date_prev = file_date(first), file_date(second)
-
-        # 6. Fonction pour formatter joliment la ligne
-        def format_idpk_line(line):
-            parsed = parse_idpk(line)
-            if not parsed:
-                return line
-            day, hour = timestamp_parts(line)
-            values = ' '.join(f'{key}={value}' for key, value in parsed[1].items())
-            return f"{day}|{hour[:5]}   Mesure IDPK ({parsed[0]}) : {values}"
-
-        # 7. Popup élégante & compacte
+    def _render_indexed_comparison(self, refprod, pair, context=None):
+        from diagnostic_views import ComparisonView
         top = tk.Toplevel(self)
-        apply_icon(top)
-        top.title(f"Comparaison IDPK – {refprod}")
-        # --- Positionner le popup à gauche de la fenêtre principale ---
-        self.update_idletasks()
-        main_x = self.winfo_rootx()
-        main_y = self.winfo_rooty()
-        largeur_popup = 425  # ou la largeur de ta popup
-        top.geometry(f"{largeur_popup}x255+{main_x - largeur_popup - 18}+{main_y + 16}")
-
-        top.configure(bg="#f4f6fb")
-        top.resizable(False, False)
-
-
-
-        frame = tk.Frame(top, bg="#f4f6fb")
-        frame.pack(fill='both', expand=True, padx=16, pady=7)
-
-        # Titre petit
-        tk.Label(frame, text=f"Comparaison Résultat IDPK pour {refprod}",
-                 font=("Segoe UI", 11, "bold"), fg="#00589b", bg="#f4f6fb").pack(anchor="center", pady=(0, 5))
-
-        # Bloc dimensions actuelles
-        tk.Label(
-            frame,
-            text=f"🟦 Fichier actuel : {trace_label(current_file)}   ({date_current})",
-            anchor="w",
-            font=("Segoe UI", 9, "italic"),
-            fg="#226a9e",
-            bg="#f4f6fb"
-        ).pack(fill="x")
-        tk.Label(
-            frame,
-            text=format_idpk_line(idpk_line),
-            font=("Consolas", 9),
-            bg="#e3f2fd",
-            fg="#003366",
-            anchor="w",
-            justify="left"
-        ).pack(fill="x", pady=(0, 2))
-        dim_act = f"  l = {dims_current.get('l', '?')}    H = {dims_current.get('H', '?')}    L = {dims_current.get('L', '?')}"
-        tk.Label(
-            frame,
-            text=dim_act,
-            font=("Segoe UI", 9, "bold"),
-            bg="#e3f2fd",
-            fg="#003366"
-        ).pack(fill="x", pady=(0, 6))
-
-        # Bloc dimensions précédentes
-        tk.Label(
-            frame,
-            text=f"🟪 Fichier précédent : {trace_label(next_file)}   ({date_prev})",
-            anchor="w",
-            font=("Segoe UI", 9, "italic"),
-            fg="#75299e",
-            bg="#f4f6fb"
-        ).pack(fill="x")
-        tk.Label(
-            frame,
-            text=format_idpk_line(idpk_line_next),
-            font=("Consolas", 9),
-            bg="#f6e3fd",
-            fg="#3e275a",
-            anchor="w",
-            justify="left"
-        ).pack(fill="x", pady=(0, 2))
-        dim_prev = f"  l = {dims_prev.get('l', '?')}    H = {dims_prev.get('H', '?')}    L = {dims_prev.get('L', '?')}"
-        tk.Label(
-            frame,
-            text=dim_prev,
-            font=("Segoe UI", 9, "bold"),
-            bg="#f6e3fd",
-            fg="#3e275a"
-        ).pack(fill="x", pady=(0, 4))
-
-        # Affiche delta si dispo
-        try:
-            delta_l = int(dims_current['l']) - int(dims_prev['l'])
-            delta_H = int(dims_current['H']) - int(dims_prev['H'])
-            delta_L = int(dims_current['L']) - int(dims_prev['L'])
-            delta_txt = f"Δ l = {delta_l:+}      Δ H = {delta_H:+}      Δ L = {delta_L:+}"
-            emoji = "✅" if all(abs(x) <= 2 for x in [delta_l, delta_H, delta_L]) else "⚠️"
-        except Exception:
-            delta_txt = "Différence : N/A"
-            emoji = "❓"
-        tk.Label(
-            frame,
-            text=f"{emoji}  {delta_txt}",
-            font=("Segoe UI", 10, "bold"),
-            fg="#055300" if emoji == "✅" else "#b56010",
-            bg="#f4f6fb"
-        ).pack(anchor="center", pady=(2, 3))
-
-        # Bouton Fermer petit
-        tk.Button(
-            frame,
-            text="Fermer",
-            font=("Segoe UI", 9, "bold"),
-            command=top.destroy,
-            bg="#dbeafe",
-            activebackground="#bcdffb",
-            relief="raised"
-        ).pack(pady=(2, 2))
-
+        top.title(f'Comparaison IDPK – {refprod}')
+        def choose(current, previous):
+            top.destroy()
+            self._render_indexed_comparison(refprod, (current, previous), context or pair)
+        top.diagnostic_view = ComparisonView(top, self, refprod, pair, context, choose)
+        top.diagnostic_view.pack(fill='both', expand=True)
+        present_popup(top, self, 760, 700)
 
     def _render_indexed_adjacent(self, target_id, filepath, data):
-        prev_items, next_items, rp_current, differences, current_number = data
-        # 4) création / nettoyage de la popup
-        if not (hasattr(self, 'adj_popup') and self.adj_popup and self.adj_popup.winfo_exists()):
-            self.adj_popup = tk.Toplevel(self)
-            apply_icon(self.adj_popup)
-            self.adj_popup.title('IDs adjacents')
-            self.adj_popup.resizable(True, True)
-            self.prev_frame = ttk.LabelFrame(self.adj_popup, text='5 IDs précédents')
-            self.current_frame = ttk.LabelFrame(self.adj_popup, text='ID actuel')
-            self.next_frame = ttk.LabelFrame(self.adj_popup, text='5 IDs suivants')
-            for f, pady in ((self.prev_frame, (10, 5)),
-                            (self.current_frame, 5),
-                            (self.next_frame, (5, 10))):
-                f.pack(fill='both', padx=10, pady=pady, expand=True)
-        else:
-            for frame in (self.prev_frame, self.current_frame, self.next_frame):
-                for w in frame.winfo_children():
-                    w.destroy()
-        self.adj_popup.title(f'IDs adjacents — {trace_label(filepath)}')
-
-        def add_adjacent_row(frame, mb, rp, fpath, number):
-            bad = differences.get((fpath, rp), False)
-            marker = "⚠️ " if bad else ""
-            lbl = ttk.Label(frame,
-                            text=f"{marker}{mb} ({rp})",
-                            cursor='hand2',
-                            foreground='red' if bad else None)
-            lbl.pack(anchor='w', padx=5, pady=2)
-            lbl.bind('<Button-1>',
-                     lambda e, m=mb, r=rp, fp=fpath, n=number: self._on_adjacent_ref_click(m, r, fp, n))
-
-        # remplir les cadres
-        if prev_items:
-            for mb, rp, fp, number in reversed(prev_items):
-                add_adjacent_row(self.prev_frame, mb, rp, fp, number)
-        else:
-            ttk.Label(self.prev_frame, text='—').pack(anchor='w', padx=5, pady=2)
-
-        # ID courant
-        bad_cur = differences.get((filepath, rp_current), False)
-        marker_cur = "⚠️ " if bad_cur else ""
-        lbl_cur = ttk.Label(self.current_frame,
-                            text=f"{marker_cur}{target_id} ({rp_current})",
-                            font=('Segoe UI', 10, 'bold'),
-                            cursor='hand2',
-                            foreground='red' if bad_cur else None)
-        lbl_cur.pack(anchor='center', pady=4)
-        lbl_cur.bind('<Button-1>',
-                     lambda e, m=target_id, r=rp_current, fp=filepath, n=current_number:
-                     self._on_adjacent_ref_click(m, r, fp, n))
-
-        if next_items:
-            for mb, rp, fp, number in next_items:
-                add_adjacent_row(self.next_frame, mb, rp, fp, number)
-        else:
-            ttk.Label(self.next_frame, text='—').pack(anchor='w', padx=5, pady=2)
-
-        # repositionnement
-        self.adj_popup.update_idletasks()
-        w = self.adj_popup.winfo_reqwidth()
-        h = self.adj_popup.winfo_reqheight()
-        x = self.winfo_rootx() + self.winfo_width() + 10
-        y = self.winfo_rooty()
-        self.adj_popup.geometry(f"{w}x{h}+{x}+{y}")
-        self.adj_popup.lift()
+        self.adjacent_view.show(data)
 
 
     def _render_indexed_file_view(self, path, lines, highlight_line=None):

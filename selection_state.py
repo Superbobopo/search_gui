@@ -11,6 +11,10 @@ class OccurrenceSelection:
     modbus: str | None
     details: dict
 
+    @property
+    def version_id(self):
+        return getattr(self.path, 'version_id', None)
+
     @classmethod
     def from_details(cls, details):
         row = details['row']

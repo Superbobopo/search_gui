@@ -213,7 +213,7 @@ def exercise(app, paths, script=False):
         app.index_status.set(original_index_status)
         switch_result('Synthèse')
         assert app.selection is selected
-        assert set(app.summary_buttons) == {'get', 'idpk', 'pute'}
+        assert {'get', 'idpk', 'pute'} <= set(app.summary_targets)
         summary_text = ' '.join(str(w.cget('text')) for w in descendants(app.summary_frame)
                                 if isinstance(w, gui.ctk.CTkLabel))
         assert selected.reference in summary_text and 'l = 48' in summary_text
@@ -231,11 +231,15 @@ def exercise(app, paths, script=False):
             assert {tag: tuple(app.txt.tag_cget(tag, key) for key in
                                ('background', 'foreground', 'justify', 'font'))
                     for tag in original_styles} == original_styles
-            for key in ('get', 'idpk', 'pute'):
+            for index, key in enumerate(('get', 'idpk', 'pute')):
                 event = selected.details[key]
                 previous = set(titled('Vue de'))
                 with patch.object(app, '_render_indexed_file_view', wraps=app._render_indexed_file_view) as render:
-                    app.summary_buttons[key].invoke()
+                    target = app.summary_targets[key].selection_text
+                    for click in range(2):
+                        stamp = 21000 + index * 1000 + click * 100
+                        target.event_generate('<ButtonPress-1>', x=4, y=4, time=stamp)
+                        target.event_generate('<ButtonRelease-1>', x=4, y=4, time=stamp + 20)
                     pump(lambda: bool(set(titled('Vue de')) - previous))
                     assert render.call_args.args[0] == event.get('path', selected.path)
                     assert render.call_args.args[2] == event['number']
@@ -328,7 +332,7 @@ def exercise(app, paths, script=False):
             assert int(text.index('insert').split('.')[0]) == target_number + 1
             type_filter('common')
             pump(lambda: controller.search_ready, seconds=10)
-            buttons = [w for w in descendants(window) if isinstance(w, gui.ttk.Button)]
+            buttons = [w for w in descendants(window) if isinstance(w, (gui.ttk.Button, gui.ActionButton))]
             buttons[0].invoke()
             assert text.index('insert') == controller.search_state['positions'][-1]
             buttons[1].invoke()
@@ -355,11 +359,15 @@ def exercise(app, paths, script=False):
                 window.destroy()
         print('OK grande trace 30000 lignes: frappe temporisee, recherche annulee, navigation, heartbeat et fermeture sans callback obsolete', flush=True)
     def current_label():
-        return ' '.join(str(w.cget('text')) for w in app.current_frame.winfo_children())
+        view = app.adjacent_view
+        data = view.data
+        return (str(data['selected']['modbus']) + ' ' + data['selected']['ref']
+                if data else str(view.heading.cget('text')))
     with patch.object(indexed_ui.messagebox, 'showinfo', side_effect=lambda *args, **kw: alerts.append(args)), \
          patch.object(indexed_ui.messagebox, 'showwarning', side_effect=lambda *args, **kw: alerts.append(args)):
         try:
             pump(lambda: app._indexed_complete)
+            switch_result('Classique')
             if script:
                 assert app.__class__.__module__ == '__main__'
                 assert app.__class__ is not gui.SearchApp
@@ -367,7 +375,8 @@ def exercise(app, paths, script=False):
             original = app.selection
             app.btn_adjacent.invoke(); pump(lambda: app.adj_popup is not None)
             pump(lambda: 'A0061574AC' in current_label())
-            assert len(app.next_frame.winfo_children()) == 5
+            own = next(c for c in app.adjacent_view.data['columns'] if c['robot'] == 'R2')
+            assert len(own['following']) == 5
             print('OK bouton IDs adjacents, homonymes R1/R2, cinq voisins', flush=True)
             click_tag('clickable_refprod'); pump(lambda: app.selection is not None and app.reference.get())
             assert (app.selection.path, app.selection.number) == (original.path, original.number)
@@ -390,12 +399,18 @@ def exercise(app, paths, script=False):
             comparison = ' '.join(str(w.cget('text')) for w in descendants(titled('Comparaison IDPK')[0]) if isinstance(w, gui.tk.Label))
             assert 'l = 48' in comparison and 'l = 55' in comparison
             # A real neighboring label event updates both main selection and popup.
-            app.next_frame.winfo_children()[0].event_generate('<Button-1>')
+            view = app.adjacent_view
+            tree = view.trees['R2']
+            key = next(k for k, row in view.rows['R2'].items() if row['modbus'] == '1195')
+            view._yview('moveto', 0); pump()
+            x, y, width, height = tree.bbox(key)
+            tree.event_generate('<ButtonPress-1>', x=x + 8, y=y + height // 2)
+            tree.event_generate('<ButtonRelease-1>', x=x + 8, y=y + height // 2)
             pump(lambda: app.selection is not None and app.selection.modbus == '1195')
             pump(lambda: '1195' in current_label())
             assert app.selection.path == paths['trace r2']
             window, text = open_event('get')
-            buttons = [w for w in descendants(window) if isinstance(w, gui.ttk.Button)]
+            buttons = [w for w in descendants(window) if isinstance(w, (gui.ttk.Button, gui.ActionButton))]
             get_next = buttons[3]; pute_next = buttons[5]
             get_next.invoke(); first = text.index('insert')
             get_next.invoke(); second = text.index('insert')
@@ -423,19 +438,19 @@ def exercise(app, paths, script=False):
             print('OK clic erreur Robot et ID reutilise ancre sur la seconde occurrence', flush=True)
             # A slow obsolete adjacent result must not repopulate the popup.
             started, release, finished = threading.Event(), threading.Event(), threading.Event()
-            original_adjacent = app.store.adjacent
-            def slow_adjacent(*args):
+            original_adjacent = app.store.paired_adjacent
+            def slow_adjacent(*args, **kwargs):
                 started.set(); release.wait(3)
-                try: return original_adjacent(*args)
+                try: return original_adjacent(*args, **kwargs)
                 finally: finished.set()
-            with patch.object(app.store, 'adjacent', slow_adjacent):
+            with patch.object(app.store, 'paired_adjacent', slow_adjacent):
                 app.btn_adjacent.invoke(); pump(started.is_set)
                 app.keyword.delete(0, 'end'); app.keyword.insert(0, 'ABSENT_999')
                 app.perform_search(); pump(lambda: 'Aucun fichier' in app.txt.get('1.0', 'end'))
                 release.set(); pump(finished.is_set); pump()
             assert app.selection is None and app._display_data is None
             assert app.btn_adjacent.cget('state') == 'disabled'
-            assert not app.prev_frame.winfo_children() and not app.next_frame.winfo_children()
+            assert app.adjacent_view.data is None and not app.adjacent_view.rows
             assert 'Aucune occurrence' in current_label()
             search('1194'); choose(paths['trace r2'], 'A0061574AC')
             # A slow file opening belonging to a previous selection is discarded.
@@ -478,19 +493,22 @@ def exercise(app, paths, script=False):
             def labels(window):
                 return ' '.join(str(w.cget('text')) for w in descendants(window) if isinstance(w, gui.tk.Label))
             pump(lambda: '1194' in labels(app.convoyage_window))
-            origin = 'Bureau' if '--desktop' in sys.argv else 'Local'
-            assert f'{origin} R1' in labels(app.convoyage_window) and f'{origin} R2' in labels(app.convoyage_window)
-            card = next(w for w in descendants(app.convoyage_window)
-                        if isinstance(w, gui.tk.Label) and '1194' in str(w.cget('text')) and w.bind('<Button-1>'))
-            card.event_generate('<Button-1>')
-            pump(lambda: 'Parcours détaillé du ModBusId' in labels(app.convoyage_window))
+            convoyage = app.convoyage_window.convoyage_errors_view
+            pump(lambda: convoyage.state == 'ready')
+            assert all(convoyage.card_content(i)['badge'] == 'R1/R2' for i in range(len(convoyage.errors)))
+            assert len({path for path, ident in convoyage.errors}) == 2
+            card = next(card for card, _ in convoyage.cards.cards if card.index == 0)
+            card.title._label.event_generate('<ButtonPress-1>', x=8, y=8)
+            card.title._label.event_generate('<ButtonRelease-1>', x=8, y=8)
+            pump(lambda: convoyage.state == 'ready')
+            assert convoyage.data[0][0]['_filepath'] == convoyage.errors[convoyage.selected_index][0]
             assert 'Présent' in labels(app.convoyage_window)
             app.show_convoyage_details('1194'); app.convoyage_errors_action()
             pump(lambda: bool(titled('Parcours détaillé')) and bool(titled('Erreurs Convoyage')))
             assert 'Présent' in labels(titled('Parcours détaillé')[0])
             app.show_tracking_robot_panel(); pump(); app.tracking_keyword.insert(0, 'A0061574AC')
             app.tracking_keyword._entry.focus_force(); app.tracking_keyword._entry.event_generate('<Return>')
-            pump(lambda: '14/10/26' in app.tracking_txt.get('1.0', 'end'))
+            pump(lambda: '14/10/2026' in app.tracking_view.export_text())
             app.show_search_panel(); app.keyword.delete(0, 'end'); app.keyword.insert(0, 'A0061574AC')
             app.btn_gear.invoke(); pump(); app.sn_entry.insert(0, '343272'); app.codelot_entry.insert(0, '261013.127')
             app.sn_entry._entry.focus_force(); app.sn_entry._entry.event_generate('<Return>')

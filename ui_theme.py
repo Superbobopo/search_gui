@@ -112,7 +112,7 @@ def navigation_icon(master, name):
     master._navigation_icon = picture
     picture.bind('<Enter>', master._on_enter)
     picture.bind('<Leave>', master._on_leave)
-    picture.bind('<Button-1>', master._clicked)
+    picture.bind('<Button-1>', lambda event: master.invoke())
     master._sync_navigation_icon()
     return picture
 
@@ -125,7 +125,7 @@ _ROLES = {
     '#2196f3': 'accent', '#1565c0': 'info_text', '#00589b': 'info_text',
     '#1a5276': 'info_text', '#003566': 'info_text', '#314c7f': 'sidebar_active',
     '#182a44': 'sidebar', '#233557': 'sidebar', '#405060': 'muted',
-    '#37474f': 'text', '#333': 'text', '#333333': 'text', '#555': 'muted',
+    '#37474f': 'text', '#172a3a': 'text', '#333': 'text', '#333333': 'text', '#555': 'muted',
     '#555555': 'muted', 'black': 'text', '#000000': 'text',
     '#909090': 'muted', '#adb5bd': 'muted', '#a3a3a3': 'muted',
     '#c7c7c7': 'border', '#00876c': 'positive_text', '#e9fdf4': 'positive_bg',
@@ -133,7 +133,7 @@ _ROLES = {
     '#fff4e3': 'warning_bg', '#fffde3': 'warning_bg', '#ffffe0': 'warning_bg',
     '#ffcdd2': 'error_bg', '#c62828': 'error_text', '#b71c1c': 'error_text',
     '#b31c1c': 'error_text', '#d02b20': 'error_text', '#fff59d': 'warning_bg',
-    'yellow': 'warning_bg', '#ffff00': 'warning_bg',
+    'yellow': 'warning_bg', '#ffff00': 'warning_bg', '#ffe66d': 'warning_bg',
 }
 for _palette in (LIGHT, DARK):
     for _role, _color in _palette.items():
@@ -176,7 +176,8 @@ def _keyboard_control(widget, colors):
 
 def apply_widget_theme(widget, colors):
     """Apply on the Tk thread; the historical result subtree stays untouched."""
-    if not widget.winfo_exists() or getattr(widget, '_preserve_classic_theme', False):
+    if (not widget.winfo_exists() or getattr(widget, '_preserve_classic_theme', False)
+            or getattr(widget, '_theme_deferred', False)):
         return
     if isinstance(widget, ctk.CTkTextbox) and not hasattr(widget, '_x_scrollbar'):
         return

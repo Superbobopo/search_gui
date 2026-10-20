@@ -31,15 +31,15 @@ def main():
         (base / 'traces' / 'trace r2' / 'TracOmega029.old').write_bytes(old.encode('cp1252'))
         archive_gate = threading.Event()
         original_index = TraceStore._index_snapshot
-        def pause_archive(store, path, *args):
-            if path.lower().endswith('.old'):
+        def pause_archive(store, path, *args, **kwargs):
+            if str(path).lower().endswith('.old'):
                 archive_gate.wait(5)
-            return original_index(store, path, *args)
+            return original_index(store, path, *args, **kwargs)
         with patch.object(sources, 'application_directory', return_value=folder), \
              patch.object(sources, 'desktop_directory', return_value=str(base / 'Desktop')), \
              patch.object(sources, 'FIXED_DIRECTORY', str(base / 'absent')), \
              patch.object(TraceStore, '_index_snapshot', pause_archive), \
-             patch.object(indexed_ui, 'TraceStore', side_effect=lambda database=None: TraceStore(base / 'index.db')):
+             patch.object(indexed_ui, 'TraceStore', side_effect=lambda database=None, **kwargs: TraceStore(base / 'index.db', **kwargs)):
             errors = []
             before = time.perf_counter()
             app = gui.SearchApp(); app.withdraw()
@@ -55,7 +55,7 @@ def main():
                         raise errors[0][1]
                     if condition(): return
                     time.sleep(.01)
-                raise AssertionError('UI operation did not complete: ' + app.status.get())
+                raise AssertionError('UI operation did not complete: ' + app.status.get() + ' / ' + app.index_status.get())
             try:
                 pump(lambda: len(app.file_list) == 4)
                 assert not app._indexed_complete
@@ -86,7 +86,7 @@ def main():
                      and 'Erreurs Convoyage' in titles() and 'Vérification erreurs Robot' in titles())
                 app.show_tracking_robot_panel(); app.tracking_keyword.insert(0, 'A0061574AC')
                 app.perform_tracking_search()
-                pump(lambda: '14/10/26' in app.tracking_txt.get('1.0', 'end'))
+                pump(lambda: '14/10/2026' in app.tracking_view.export_text())
                 app.show_search_panel(); app.keyword.delete(0, 'end'); app.keyword.insert(0, 'A0061574AC')
                 app.recherche_avancee_criteria('A0061574AC', sn='343272', codelot='261013.127')
                 pump(lambda: len(app._groups) == 2 and getattr(app, '_active_mode', None) == 'advanced')

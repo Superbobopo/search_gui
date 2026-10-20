@@ -83,7 +83,8 @@ def main():
             assert '11:00:36.9' in app.selection.details['get']['text']
             assert '11:00:52.3' in app.selection.details['pute']['text']
             app.btn_adjacent.invoke(); pump(lambda: app.adj_popup is not None)
-            assert '683' in ' '.join(w.cget('text') for w in app.current_frame.winfo_children())
+            pump(lambda: app.adjacent_view.data is not None)
+            assert app.adjacent_view.data['selected']['modbus'] == '683'
             print('Cas capture: Local R2, ticket ligne 65169, GET 11:00:36.9, PUTE 11:00:52.3', flush=True)
             # Real doubles, complete contents and exact source line on the actual large trace.
             stamp = 2000

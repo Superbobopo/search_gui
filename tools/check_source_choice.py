@@ -4,6 +4,7 @@ from contextlib import ExitStack
 import ctypes
 from ctypes import wintypes
 import os
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -36,7 +37,7 @@ def main():
         installed, project, desktop_root = base / 'Apoteka', base / 'Project', base / 'Desktop'
         for root, marker in ((installed, 'INSTALLED'), (project / 'traces', 'PROJECT'),
                              (desktop_root / 'traces', 'DESKTOP')):
-            for robot in ('R1', 'R2'):
+            for robot in ('trace r1', 'trace r2'):
                 directory = root / robot
                 directory.mkdir(parents=True)
                 (directory / 'TracOmega.txt').write_text(
@@ -45,6 +46,13 @@ def main():
         stack.enter_context(patch.object(trace_sources, 'application_directory', return_value=str(project)))
         stack.enter_context(patch.object(trace_sources, 'desktop_directory', return_value=str(desktop_root)))
         stack.enter_context(patch.dict(os.environ, LOCALAPPDATA=str(base / 'Cache')))
+        automatic = '--desktop-only' in sys.argv
+        if automatic:
+            filename = Path(trace_sources.source_preferences_path())
+            filename.parent.mkdir(parents=True)
+            filename.write_text(json.dumps(dict(version=1, machine_id='test-pc',
+                                                 startup_source='desktop')), encoding='utf8')
+            stack.enter_context(patch.object(trace_sources, 'machine_identifier', return_value='test-pc'))
         app = search_gui.SearchApp()
         errors = []
         app.report_callback_exception = lambda *error: errors.append(error)
@@ -59,29 +67,35 @@ def main():
                 time.sleep(.005)
             raise AssertionError('Attente de la selection des sources expiree')
         try:
-            pump(lambda: app._source_dialog is not None)
-            dialog = app._source_dialog
-            assert len(dialog.checkboxes) == 3
-            assert dialog.open_button.cget('state') == 'disabled'
-            assert not hasattr(app, 'store')
-            assert not list((base / 'Cache').rglob('*.sqlite3'))
-            dialog.checkboxes[2]._canvas.event_generate('<Button-1>', x=8, y=8)
-            pump(lambda: bool(dialog.selected_directories()))
-            assert dialog.selected_directories() == (str(desktop_root / 'traces'),)
-            dialog.open_button.invoke()
+            if not automatic:
+                pump(lambda: app._source_dialog is not None)
+                dialog = app._source_dialog
+                assert len(dialog.checkboxes) == 3
+                assert dialog.open_button.cget('state') == 'disabled'
+                assert dialog.open_button.cget('fg_color') == app._palette['raised']
+                assert not hasattr(app, 'store')
+                assert not list((base / 'Cache').rglob('*.sqlite3'))
+                dialog.checkboxes[2]._canvas.event_generate('<Button-1>', x=8, y=8)
+                pump(lambda: bool(dialog.selected_directories()))
+                assert dialog.selected_directories() == (str(desktop_root / 'traces'),)
+                dialog.open_button.invoke()
             pump(lambda: app._indexed_complete)
-            expected = {str(desktop_root / 'traces' / robot / 'TracOmega.txt') for robot in ('R1', 'R2')}
-            assert set(app.file_list) == expected
+            assert app._source_dialog is None
+            expected = {str(desktop_root / 'traces' / robot / 'TracOmega.txt')
+                        for robot in ('trace r1', 'trace r2')}
+            assert {os.fspath(path) for path in app.file_list} == expected
             assert app.store.database == trace_store.cache_path([str(desktop_root / 'traces')])
             app.modbus.set(False)
             app.reference.set(True)
             app.keyword.insert(0, 'DESKTOP')
             app.btn_search.invoke()
             pump(lambda: app.selection is not None)
-            assert {path for path, hits in app._groups} == expected
-            assert 'Bureau R' in app.file_label.cget('text')
+            assert {os.fspath(path) for path, hits in app._groups} == expected
+            assert app.source_label.cget('text').startswith('Bureau R')
+            assert 'TracOmega.txt' in app.file_label.cget('text')
             assert not app.store.search('PROJECT') and not app.store.search('INSTALLED')
-            print('OK choix par vrais boutons : Bureau seul, R1/R2, recherche et provenance ; autres sources absentes')
+            print('OK Bureau seul, trace r1/r2, recherche et provenance ; autres sources absentes ; '
+                  + ('demarrage automatique sans dialogue' if automatic else 'choix par vrais boutons'))
         finally:
             app._close_indexed_app()
             app._index_thread.join(3)

@@ -1,8 +1,94 @@
 # Chargement et recherches
 
-L'application utilise un index SQLite local. Le premier passage lit et indexe les traces ; les lancements suivants vérifient leur taille et leur date de modification, puis ne traitent que les changements. Les fichiers courants sont prioritaires. Pendant cette première étape, les recherches fonctionnent sur les fichiers déjà indexés et affichent la mention « résultats partiels ».
+## Harmonisation de l'interface — 19 octobre 2026
+
+`tools/check_ui_latency.py` sur bureau Windows privé, mêmes deux traces temporaires, avec contrôle de conservation des widgets, sélection/copie, bornage des panneaux, absence de SQL de recherche/comparaison lors des changements de thème et rafraîchissement après révision de source. Il mesure le callback puis le traitement des événements (avec une attente de drainage d'environ 25 ms). Ce n'est ni une première indexation ni une mesure sur les bases de production.
+
+Médianes en ms, **callback / événements traités** :
+
+| Transition | Avant | Dernier passage après |
+|---|---:|---:|
+| Synthèse → Classique | 13,04 / 48,56 | 14,01 / 50,41 |
+| Classique → Synthèse | 30,68 / 105,62 | 36,69 / 122,34 |
+| Recherche → Suivi | 17,90 / 286,17 | 19,54 / 250,16 |
+| Suivi → Convoyage | 13,14 / 79,74 | 17,39 / 76,00 |
+| Convoyage → Recherche | 48,80 / 488,52 | 34,18 / 476,60 |
+
+Rapports conservés : `.benchmark/ui_unified_before_20261019.json`, `ui_unified_after_20261019.json`, `ui_unified_after_serial_20261019.json`, `ui_unified_after_final_20261019.json`. Le premier passage après a coïncidé avec un autre contrôle graphique privé et présente des durées nettement plus élevées (retour Recherche : 1 015,97 ms) ; il n'est pas utilisé comme comparaison isolée. Le passage isolé intermédiaire mesure ce retour à 445,58 ms et Classique → Synthèse à 97,24 ms. Le dernier passage suit le traitement des états/couleurs identiques des boutons ; tous les rapports restent disponibles, sans sélection du meilleur.
+
+Les contrôles de réutilisation et de SQL réussissent. Les temps restent variables avec le rendu natif et la vérification périodique ; le dernier passage Classique → Synthèse prend 16,72 ms de plus que la référence. L'harmonisation n'est pas présentée comme une accélération générale. Mémoire RSS et tailles des bases non remesurées : le stockage n'a pas changé. Les listes de 10 000 anomalies sont vérifiées avec moins de 16 cartes instanciées aux dimensions testées.
+
+## Voisins et comparaisons exactes — 19 octobre 2026
+
+Mesure des vrais clics sur un bureau Windows privé : quatre fichiers OMEGA générés dans un dossier temporaire, 1 200 tickets, 300 identités sur deux robots et deux périodes. Douze clics R1 suivant le même parcours 1251→1252→1251→1250, répété trois fois. Temps complet jusqu'à la sélection, aux voisins et à la comparaison Synthèse disponibles ; compteur de toutes les instructions SQLite tracées, transactions comprises. Sources originales et bases permanentes non utilisées.
+
+| Mesure | Avant | Après |
+| --- | ---: | ---: |
+| Navigation, médiane | 1 334,0 ms | 816,6 ms |
+| Instructions SQLite par navigation, médiane | 270 | 18 |
+| Première ouverture des voisins | 375,0 ms | 428,0 ms |
+| Instructions SQLite à cette ouverture | 243 | 22 |
+| Mémoire résidente du processus à la fin | 68,93 Mio | 70,96 Mio |
+| Cache SQLite, fichier principal | 1 998 848 octets | 2 093 056 octets |
+| Navigations conservant les deux widgets de tableaux | 0 / 12 | 12 / 12 |
+
+Dernier gain médian de navigation : **38,8 %**, avec **93,3 %** d'instructions SQLite en moins ; environ **2,02 Mio** de mémoire résidente et **92 Kio** de cache supplémentaires. Les index sont additifs, préparés après disponibilité du cache. Les données de voisinage et comparaisons exactes sont mutualisées par révision publiée, avec caches bornés ; les tableaux et leurs styles sont mis à jour en place. L'historique et les traces restent inchangés.
+
+Rapports : `.benchmark/adjacent_before_20261019.json` et `.benchmark/adjacent_after_20261019.json`. L'intermédiaire `adjacent_after_initial_20261019.json` mesurait 736,0 ms ; il n'est pas retenu à la place du dernier passage. La première ouverture n'est pas accélérée dans le dernier échantillon et la navigation reste entre 766,6 et 1 223,8 ms : le rendu de la sélection principale demeure coûteux. Aucune promesse de navigation instantanée, de résultat sur le gros corpus réel ou de temps disque froid. Une mesure de mémoire résidente finale ne constitue pas un pic mémoire ; les tailles WAL/historique ne sont pas remesurées ici. Les nouvelles comparaisons respectent Référence/SN/CodeLot et peuvent traverser les robots, contrairement à l'ancienne comparaison par référence : les temps comparent les parcours utilisateurs, pas deux règles métier identiques.
+
+## Fluidité de l'interface — 19 octobre 2026
+
+Mesure sur bureau Windows privé, deux petits fichiers OMEGA temporaires issus de `current_r2.txt`, vingt lots simulés à partir d'un événement indexé, trois échantillons par transition. Les temps ci-dessous sont les médianes ; « événements » comprend `update()` puis une courte phase de drainage d'au moins 25 ms. Il ne s'agit ni d'une mesure de fréquence d'affichage ni d'un temps d'indexation.
+
+| Bascule | Callback avant | Callback après | Avec événements avant | Avec événements après |
+| --- | ---: | ---: | ---: | ---: |
+| Synthèse → Classique | 125,4 ms | 12,9 ms | 178,0 ms | 49,1 ms |
+| Classique → Synthèse | 518,6 ms | 26,7 ms | 1 522,3 ms | 169,1 ms |
+
+Les cartes et leur texte sélectionnable sont conservés, sans nouvelle recherche SQL pour ces bascules. Les changements de fonction réutilisent trois panneaux au maximum. Les callbacks Recherche→Suivi, Suivi→Convoyage et Convoyage→Recherche passent respectivement de 90,7/57,8/187,9 ms à 27,6/21,4/51,9 ms. Le drainage après navigation reste variable : environ 366/105/678 ms dans le dernier contrôle privé, qui conserve désormais le résultat avec ses vingt lots au retour, alors que la version précédente revenait à une recherche vide. Aucun gain équivalent n'est revendiqué sur tout le rafraîchissement visuel de ces changements de fonction.
+
+Causes corrigées : destruction/reconstruction de Synthèse à chaque mode, reconstruction des panneaux, parcours global du thème sur chaque Map, reconfiguration identique des polices/couleurs/wraplength des textes. Le thème recolore désormais les champs existants. Les workers sont invalidés lors d'une navigation ; une révision d'index différente relance la recherche au retour. Le contrôle vérifie cette actualisation par ajout réel dans une trace temporaire, ainsi que la conservation des widgets, de la sélection copiée et l'absence de requêtes redondantes.
+
+Rapports : `.benchmark/ui_latency_before_20261019.json` et `.benchmark/ui_latency_validated_20261019.json`. Les rapports intermédiaires `after_initial`, `after`, `final`, `final2`, `final3` et `delivered` documentent les essais successifs de réutilisation, ciblage du thème et placement des panneaux. La variation des temps Windows interdit de présenter le meilleur échantillon comme une garantie. Mémoire/tailles des bases non remesurées pour cette intervention d'interface ; rétention volontaire limitée aux trois panneaux et à la Synthèse courante. Aucun benchmark du corpus réel, aucune modification des traces ou bases permanentes, aucun exécutable reconstruit.
+
+Depuis le 19 octobre 2026, OMEGA dispose d'un historique SQLite permanent compressé, séparé du cache de recherche par sélection. Les générations disparues restent indexables ; MODBUS conserve la synchronisation des fichiers présents. Les mesures du 17 octobre et antérieures précèdent cette conservation cumulative. La comparaison du 19 octobre ci-dessous porte sur quatre fichiers courants ; aucun benchmark global des 105 traces n'est revendiqué.
+
+L'application utilise un index SQLite local. Le cache déjà publié est disponible avant la préparation de l'historique et la vérification des sources. OMEGA est vérifié par empreinte brute une fois au démarrage, sans réanalyse des contenus reconnus ; les passages suivants contrôlent taille/date/identité avant tout nouveau traitement. L'indexation initiale et la reprise d'un cache incomplet restent progressives : seuls les fichiers non publiés ou modifiés sont traités. Un fichier interrompu avant validation de sa transaction est retraité seul.
 
 L'indexation, les recherches et les analyses tournent en arrière-plan. Les informations GET/PUTE, IDPK et les derniers emplacements par lot sont déjà indexés : afficher un résultat ne parcourt plus les archives. Le texte complet n'est chargé qu'à l'ouverture d'une trace, avec une limite de trois fichiers en mémoire.
+
+## Mesures du 19 octobre 2026 — démarrage et FTS par lots
+
+Comparaison avec la version précédente disposant déjà de l'historique OMEGA : **4 fichiers complets courants R1/R2 OMEGA/MODBUS, 11 661 460 octets**. Chaque exécution utilise ses propres copies temporaires et bases neuves. Copie des sources, vérification de leurs empreintes et mesures de stockage exclues du temps d'indexation ; cache Windows non purgé. Une exécution par version, sans prétendre mesurer un disque froid ou toute la collection locale.
+
+| Opération | Avant | Après |
+| --- | ---: | ---: |
+| Première indexation, archivage inclus | 13,614 s | 5,273 s |
+| Réouverture du service et métadonnées en cache | 24,2 ms | 26,7 ms |
+| Vérification OMEGA à la réouverture | 1,028 s | 54,1 ms |
+| Passage suivant sans changement | 24,3 ms | 19,8 ms |
+| Ajout dans OMEGA R2, génération conservée | 1,209 s | 1,034 s |
+| Cache de recherche neuf | 43 081 728 octets | 42 614 784 octets |
+| Archive permanente neuve | 1 134 592 octets | 1 134 592 octets |
+| Mémoire résidente après première indexation | 27,7 Mio | 28,7 Mio |
+| Mémoire résidente finale | 28,8 Mio | 29,4 Mio |
+
+La première indexation est réduite de **61,3 %** sur ce corpus ; la vérification au redémarrage est environ **19 fois plus rapide**. Ces facteurs ne sont pas extrapolés aux 105 fichiers. L'ajout conserve la voie d'indexation incrémentale ; la compression et le calcul canonique du fichier modifié restent proportionnels à son contenu.
+
+Les empreintes des résultats et des événements GET/PUTE/IDPK des quatre recherches comparées sont identiques. Médianes de cinq passages, **service seul sans rendu Tk** : ID présent 2,10 → 2,20 ms et préparation des détails 10,64 → 10,91 ms ; référence présente 5,70 → 5,43 ms et détails 10,40 → 10,72 ms ; ID absent 1,91 → 1,99 ms ; référence absente 4,04 → 4,21 ms. Aucun gain significatif sur les recherches elles-mêmes n'est revendiqué : le changement vise les traitements répétés et l'alimentation de l'index.
+
+Contrôle d'interface sur bureau privé avec préparation volontairement bloquée : cache disponible **0,623 s après le début de l'ouverture du service**, **0,978 s construction de l'interface comprise**. Recherche par bouton et vrais doubles-clics GET/PUTE exécutés avant libération de la préparation ; texte complet, lignes originales et surlignages vérifiés, sélection stable après la vérification. Le premier essai de ce contrôle incluait toute la construction Tk dans le seuil de disponibilité après choix et avait dépassé une seconde en parallèle d'un autre contrôle graphique ; les deux durées sont désormais distinguées et le contrôle chronométré est exécuté seul.
+
+Le cache réel incomplet du Bureau et son historique ont aussi été copiés avec l'API de sauvegarde SQLite, **originaux ouverts uniquement en lecture seule** : 8 fichiers publiés dont 5 OMEGA. Sur cette copie, service et métadonnées disponibles en **19,1 ms**, recherche et détails en **13,6 ms**, avant toute préparation d'historique. Ce contrôle n'effectue ni synchronisation réelle ni indexation des 58 générations OMEGA restantes.
+
+Rapports locaux : `.benchmark/omega_performance_20261019/before.json`, `after.json`, `cache_readiness.json`. Modules de référence conservés dans le sous-dossier `baseline/`. Commandes reproductibles (choisir de nouveaux rapports absents) :
+
+```powershell
+py -3.13 -B tools/benchmark_omega_startup.py --module-dir .benchmark/omega_performance_20261019/baseline --output .benchmark/omega_performance_20261019/before.json
+py -3.13 -B tools/benchmark_omega_startup.py --output .benchmark/omega_performance_20261019/after.json
+```
+
+Les bases de mesure sont temporaires ; le script vérifie que les copies correspondent aux originaux, puis que tailles/dates de ceux-ci sont inchangées. Les temps du service ne sont pas des temps complets depuis le lancement de Python. Aucune archive réelle n'a été reconstruite ou effacée pour ces mesures.
 
 ## Mesures du 17 octobre 2026 — modernisation
 

@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import scrolledtext, ttk
 
 from app_assets import apply_icon
+from ui_components import ActionButton, present_popup, font as ui_font
 from trace_sources import trace_label
 
 
@@ -206,14 +207,14 @@ def show_trace_view(app, path, lines, highlight_line=None):
     toolbar.grid(row=0, column=0, sticky='ew', padx=16, pady=(10, 4))
     toolbar.columnconfigure(1, weight=1)
     tk.Label(toolbar, text='Recherche dans ce fichier :', bg=bg, fg=foreground,
-             font=('Segoe UI', 10)).grid(row=0, column=0, padx=(0, 8))
-    local = ttk.Entry(toolbar, font=('Segoe UI', 11), width=25)
+             font=ui_font(native=True)).grid(row=0, column=0, padx=(0, 8))
+    local = ttk.Entry(toolbar, font=ui_font(native=True), width=25)
     local.grid(row=0, column=1, sticky='ew')
     navigation = tk.Frame(toolbar, bg=bg)
     navigation.grid(row=0, column=2, padx=(8, 0))
-    previous = ttk.Button(navigation, text='↑', width=3)
+    previous = ActionButton(navigation, text='↑', width=32)
     previous.pack(side='left')
-    following = ttk.Button(navigation, text='↓', width=3)
+    following = ActionButton(navigation, text='↓', width=32)
     following.pack(side='left', padx=(2, 0))
     events = tk.Frame(toolbar, bg=bg)
     events.grid(row=1, column=0, columnspan=3, sticky='w', pady=(8, 2))
@@ -221,11 +222,11 @@ def show_trace_view(app, path, lines, highlight_line=None):
     for key, title in [('get', 'GET'), ('pute', 'PUTE')]:
         group = tk.Frame(events, bg=bg)
         group.pack(side='left', padx=(0, 16))
-        tk.Label(group, text=title, font=('Segoe UI', 10, 'bold'), bg=bg,
+        tk.Label(group, text=title, font=ui_font(bold=True, native=True), bg=bg,
                  fg=foreground).pack(side='left', padx=(0, 6))
-        before = ttk.Button(group, text='⟨', width=3, state='disabled')
+        before = ActionButton(group, text='⟨', width=32, state='disabled')
         before.pack(side='left')
-        after = ttk.Button(group, text='⟩', width=3, state='disabled')
+        after = ActionButton(group, text='⟩', width=32, state='disabled')
         after.pack(side='left', padx=(2, 0))
         event_buttons[key] = (before, after)
     text = scrolledtext.ScrolledText(top, wrap='word', font=('Consolas', 11),
@@ -238,7 +239,7 @@ def show_trace_view(app, path, lines, highlight_line=None):
     text.tag_configure('mainline', font=('Consolas', 11, 'bold'))
     status = tk.StringVar(value='Chargement de la trace…')
     tk.Label(top, textvariable=status, bg=bg, fg=palette.get('muted', '#405060'),
-             anchor='w', font=('Segoe UI', 10)).grid(row=2, column=0, sticky='ew', padx=16, pady=(2, 10))
+             anchor='w', font=ui_font(native=True)).grid(row=2, column=0, sticky='ew', padx=16, pady=(2, 10))
     controller = TraceViewController(top, text, local, status)
     controller.buttons = event_buttons
     top.trace_controller = controller
@@ -251,5 +252,5 @@ def show_trace_view(app, path, lines, highlight_line=None):
         app._theme_window(top)
     app._insert_text_batches(text, controller.prepared_lines(lines),
                              lambda: controller.finish_loading(highlight_line, len(lines)))
-    top.lift()
+    present_popup(top, app, 980, 650)
     return top

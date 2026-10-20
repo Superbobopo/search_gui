@@ -4,6 +4,7 @@ from pathlib import Path
 from queue import Queue
 from types import SimpleNamespace
 import tempfile
+import json
 import threading
 import unittest
 from unittest.mock import Mock, patch
@@ -11,9 +12,38 @@ from unittest.mock import Mock, patch
 import indexed_ui
 import trace_sources
 from trace_store import cache_path
+from omega_history import HistoryUnavailable
 
 
 class SourceChoiceTests(unittest.TestCase):
+    def setUp(self):
+        preference = patch.object(indexed_ui, 'preferred_trace_directories', return_value=None)
+        self.preferred = preference.start()
+        self.addCleanup(preference.stop)
+
+    def test_local_desktop_policy_bypasses_choice_and_other_source_discovery(self):
+        self.preferred.return_value = ('desktop/traces',)
+        with patch.object(indexed_ui, 'available_trace_sources') as available:
+            self._run_worker((), ('desktop/traces',))
+            available.assert_not_called()
+
+    def test_preference_is_local_to_machine_and_tracks_redirected_desktop(self):
+        with tempfile.TemporaryDirectory() as folder:
+            filename = Path(folder) / 'source_preferences.json'
+            with patch.object(trace_sources, 'source_preferences_path', return_value=str(filename)), \
+                    patch.object(trace_sources, 'machine_identifier', return_value='this-pc'), \
+                    patch.object(trace_sources, 'desktop_directory', return_value=folder):
+                self.assertIsNone(trace_sources.preferred_trace_directories())
+                settings = dict(version=1, machine_id='this-pc', startup_source='desktop')
+                filename.write_text(json.dumps(settings), encoding='utf8')
+                self.assertEqual(trace_sources.preferred_trace_directories(), (str(Path(folder) / 'traces'),))
+                with patch.object(trace_sources, 'machine_identifier', return_value='another-pc'):
+                    self.assertIsNone(trace_sources.preferred_trace_directories())
+                with patch.object(trace_sources, 'machine_identifier', return_value=None):
+                    self.assertIsNone(trace_sources.preferred_trace_directories())
+                filename.write_text('invalid json', encoding='utf8')
+                self.assertIsNone(trace_sources.preferred_trace_directories())
+
     def test_only_populated_distinct_roots_are_offered(self):
         with tempfile.TemporaryDirectory() as folder:
             roots = [Path(folder) / name for name in ('apoteka', 'project', 'desktop')]
@@ -57,6 +87,56 @@ class SourceChoiceTests(unittest.TestCase):
             self.assertFalse(worker.is_alive())
             store.assert_not_called()
 
+    def test_archive_write_failure_is_reported_and_retried(self):
+        app = self._app()
+        store = Mock()
+        store.corrupt.is_set.return_value = False
+        store.metadata.return_value = []
+        attempts = []
+        def sync(*args):
+            attempts.append(True)
+            if len(attempts) == 1:
+                raise HistoryUnavailable('Nouvelles traces non archivées')
+            app._stop_index.set()
+            return dict(changed=0, removed=0, failures=[])
+        store.sync.side_effect = sync
+        with patch.object(indexed_ui, 'available_trace_sources', return_value=(('Bureau', 'second'),)), \
+                patch.object(indexed_ui, 'discover_trace_files', return_value=[]), \
+                patch.object(indexed_ui, 'TraceStore', return_value=store), \
+                patch.object(app._stop_index, 'wait', return_value=False):
+            indexed_ui.IndexedAppMixin._index_loop(app)
+        self.assertEqual(len(attempts), 2)
+        messages = [app._index_messages.get_nowait() for i in range(app._index_messages.qsize())]
+        self.assertEqual([message[0] for message in messages],
+                         ['ready', 'phase', 'phase', 'history_error', 'phase', 'complete'])
+        store.rebuild.assert_not_called()
+
+    def test_ready_is_published_before_preparation_failure_and_retry(self):
+        app = self._app()
+        store = Mock()
+        store.corrupt.is_set.return_value = False
+        store.metadata.return_value = [{'path': 'cached'}]
+        store.prepare_history.side_effect = [HistoryUnavailable('archive occupée'), None]
+        store.sync.side_effect = lambda *args: app._stop_index.set() or dict(changed=0, removed=0, failures=[])
+        with patch.object(indexed_ui, 'available_trace_sources', return_value=(('Bureau', 'second'),)), \
+                patch.object(indexed_ui, 'discover_trace_files', return_value=[]), \
+                patch.object(indexed_ui, 'TraceStore', return_value=store), \
+                patch.object(app._stop_index, 'wait', return_value=False):
+            indexed_ui.IndexedAppMixin._index_loop(app)
+        messages = [app._index_messages.get_nowait() for i in range(app._index_messages.qsize())]
+        self.assertEqual([message[0] for message in messages], ['ready', 'phase', 'history_error', 'phase', 'complete'])
+        self.assertEqual(messages[0][2], [{'path': 'cached'}])
+        self.assertEqual(store.prepare_history.call_count, 2)
+        store.rebuild.assert_not_called()
+
+    def test_global_diagnostics_wait_for_source_verification(self):
+        app = SimpleNamespace(_indexed_complete=True, _sources_verified=False)
+        with patch.object(indexed_ui.messagebox, 'showinfo') as info:
+            self.assertFalse(indexed_ui.IndexedAppMixin._diagnostic_ready(app))
+            info.assert_called_once()
+        app._sources_verified = True
+        self.assertTrue(indexed_ui.IndexedAppMixin._diagnostic_ready(app))
+
     @staticmethod
     def _app():
         return SimpleNamespace(_index_messages=Queue(), _stop_index=threading.Event(),
@@ -67,7 +147,7 @@ class SourceChoiceTests(unittest.TestCase):
         store = Mock()
         store.corrupt.is_set.return_value = False
         store.metadata.return_value = []
-        store.sync.side_effect = lambda *args: app._stop_index.set() or {'changed': 0}
+        store.sync.side_effect = lambda *args: app._stop_index.set() or {'changed': 0, 'failures': []}
         with patch.object(indexed_ui, 'available_trace_sources', return_value=sources), \
                 patch.object(indexed_ui, 'discover_trace_files', return_value=['chosen-file']) as discover, \
                 patch.object(indexed_ui, 'TraceStore', return_value=store) as constructor:
@@ -81,7 +161,8 @@ class SourceChoiceTests(unittest.TestCase):
                     app._sources_chosen.set()
                 worker.join(2)
                 self.assertFalse(worker.is_alive())
-                constructor.assert_called_once_with(cache_path(selected))
+                constructor.assert_called_once_with(cache_path(selected), directories=selected,
+                                                    stop=app._stop_index, defer_history=True)
                 discover.assert_called_once_with(directories=selected)
                 store.sync.assert_called_once_with(['chosen-file'], unittest.mock.ANY, app._stop_index)
             finally:

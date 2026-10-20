@@ -15,14 +15,20 @@ import customtkinter as ctk
 from background_tasks import BackgroundTasks
 from trace_parser import format_ticket_fields, parse_fields, timestamp_parts
 from trace_sources import discover_trace_files, trace_label, available_trace_sources, trace_directories
+from trace_sources import preferred_trace_directories, compact_trace_label
 from trace_store import TraceStore, Cancelled, CHECKPOINTS, cache_path
 from source_choice import SourceChoiceDialog
 from app_assets import apply_icon
 from selection_state import OccurrenceSelection
 from ui_theme import ManagedTextbox
+from trace_identity import TraceRef
+from omega_history import HistoryUnavailable
 
 
 class IndexedAppMixin:
+    def _compact_trace_label(self, path):
+        return compact_trace_label(path, getattr(self, '_selected_directories', None))
+
     def _start_indexed_service(self):
         self.tasks = BackgroundTasks()
         self._index_messages = Queue()
@@ -38,6 +44,7 @@ class IndexedAppMixin:
         self.btn_adjacent.configure(state='disabled')
         self._view_generation = 0
         self._indexed_complete = False
+        self._sources_verified = False
         self._query_serial = 0
         self.status = tk.StringVar(value='Prêt pour une recherche')
         self.index_status = tk.StringVar(value='Ouverture de l’index…')
@@ -48,7 +55,7 @@ class IndexedAppMixin:
                 tk.Label(self, textvariable=variable, anchor='w', bg='#f7f9fa', fg='#405060').pack(side='bottom', fill='x')
         self.protocol('WM_DELETE_WINDOW', self._close_indexed_app)
         apply_icon(self)
-        self.bind('<Map>', self._icon_on_map, add='+')
+        self.bind_class('Toplevel', '<Map>', self._icon_on_map, add='+')
         self.after(250, lambda: apply_icon(self))
         self._index_thread = threading.Thread(target=self._index_loop, daemon=True, name='trace-index')
         self._index_thread.start()
@@ -60,8 +67,11 @@ class IndexedAppMixin:
 
     def _index_loop(self):
         try:
-            sources = available_trace_sources()
-            if len(sources) > 1:
+            preferred = preferred_trace_directories()
+            sources = available_trace_sources() if preferred is None else ()
+            if preferred is not None:
+                self._selected_directories = preferred
+            elif len(sources) > 1:
                 self._index_messages.put(('sources', sources))
                 while not self._sources_chosen.wait(.1):
                     if self._stop_index.is_set():
@@ -71,7 +81,8 @@ class IndexedAppMixin:
                                               if sources else tuple(trace_directories()))
             if self._stop_index.is_set():
                 return
-            store = TraceStore(cache_path(self._selected_directories))
+            store = TraceStore(cache_path(self._selected_directories), directories=self._selected_directories,
+                               stop=self._stop_index, defer_history=True)
             try:
                 metadata = store.metadata()
             except sqlite3.DatabaseError:
@@ -79,22 +90,39 @@ class IndexedAppMixin:
                     raise
                 store.rebuild(); metadata = []
             self._index_messages.put(('ready', store, metadata, store.initialized()))
+            store.prepare_analysis(self._stop_index)
+            self._index_messages.put(('phase', 'Préparation de l’historique'))
+            while not self._stop_index.is_set():
+                try:
+                    store.prepare_history(self._stop_index)
+                    break
+                except HistoryUnavailable as error:
+                    self._index_messages.put(('history_error', str(error)))
+                    self._stop_index.wait(2)
+            verified_once = False
             while not self._stop_index.is_set():
                 if store.corrupt.is_set():
                     self._index_messages.put(('rebuilding',))
                     store.rebuild()
                     self._index_messages.put(('ready', store, [], False))
                 paths = discover_trace_files(directories=self._selected_directories)
+                if not verified_once:
+                    self._index_messages.put(('phase', 'Vérification des sources'))
                 def progress(done, total, path, published):
                     self._index_messages.put(('progress', done, total, path, published,
                                               store.metadata() if published else None))
                 try:
                     result = store.sync(paths, progress, self._stop_index)
+                except HistoryUnavailable as error:
+                    self._index_messages.put(('history_error', str(error)))
+                    self._stop_index.wait(2)
+                    continue
                 except sqlite3.DatabaseError:
                     if store.corrupt.is_set():
                         continue
                     raise
                 self._index_messages.put(('complete', result, store.metadata()))
+                verified_once = not bool(result['failures'])
                 self._stop_index.wait(2)
         except Cancelled:
             pass
@@ -112,40 +140,64 @@ class IndexedAppMixin:
                     self._source_dialog = SourceChoiceDialog(
                         self, item[1], self._accept_trace_sources, self._close_indexed_app)
                 elif item[0] == 'ready':
+                    self._index_content_revision = getattr(self, '_index_content_revision', 0) + 1
                     self.store = item[1]
                     self._indexed_complete = item[3]
                     self._install_metadata(item[2])
+                    self._sources_verified = False
+                    self.index_status.set('Cache disponible — vérification des sources en cours'
+                                          if item[2] else 'Préparation de l’index')
+                    if getattr(self, 'btn_erreurs', None) and self.btn_erreurs.winfo_exists():
+                        self.btn_erreurs.configure(state='disabled')
+                elif item[0] == 'phase':
+                    prefix = 'Cache disponible — ' if self.file_list else ''
+                    self.index_status.set(prefix + item[1])
                 elif item[0] == 'progress':
                     _, done, total, path, published, metadata = item
                     self.index_status.set(f'Indexation {done}/{total} : {os.path.basename(path)} — résultats partiels'
-                                    if not self._indexed_complete else f'Actualisation {done}/{total} : {os.path.basename(path)}')
+                                    if not self._indexed_complete or not self._sources_verified else f'Actualisation {done}/{total} : {os.path.basename(path)}')
                     if published:
                         self._install_metadata(metadata)
                         if getattr(self, '_last_search', None):
-                            self._launch_search(*self._last_search)
+                            self._refresh_indexed_search()
                 elif item[0] == 'complete':
+                    previously_verified = self._sources_verified
                     changed = item[1]['changed'] or item[1]['removed']
+                    if changed:
+                        self._index_content_revision = getattr(self, '_index_content_revision', 0) + 1
                     self._install_metadata(item[2])
                     was_complete = self._indexed_complete
                     self._indexed_complete = was_complete or not bool(item[1]['failures'])
+                    self._sources_verified = not bool(item[1]['failures'])
                     self.files_loaded = self._indexed_complete
+                    if self._sources_verified and getattr(self, 'selection', None) and '_summary_comparison' not in self.selection.details:
+                        self._render_summary(self.selection.details)
                     failures = item[1]['failures']
                     if failures:
-                        suffix = 'actualisation incomplète' if was_complete else 'résultats partiels'
-                        self.index_status.set(f'{len(self.file_list)} fichiers prêts — {suffix}, '
+                        self.index_status.set(f'Indexation incomplète — {len(self.file_list)} fichiers disponibles, '
                                               f'{len(failures)} fichier(s) à réessayer')
                     else:
                         self.index_status.set(f'{len(self.file_list)} fichiers prêts')
                     if getattr(self, 'btn_erreurs', None) and self.btn_erreurs.winfo_exists():
-                        self.btn_erreurs.configure(state='normal' if self._indexed_complete else 'disabled')
+                        self.btn_erreurs.configure(state='normal' if self._indexed_complete and self._sources_verified else 'disabled')
                     self.title('Recherche TracOmega')
                     if (changed or not was_complete) and getattr(self, '_last_search', None):
-                        self._launch_search(*self._last_search)
+                        self._refresh_indexed_search()
+                    elif self._sources_verified and not previously_verified:
+                        popup = getattr(self, 'adj_popup', None)
+                        if popup is not None and popup.winfo_exists() and self.selection:
+                            self.open_adjacent_for_current_occurrence()
                 elif item[0] == 'error':
                     self.index_status.set(f'Index indisponible : {item[1]}')
+                elif item[0] == 'history_error':
+                    self._sources_verified = False
+                    if getattr(self, 'btn_erreurs', None) and self.btn_erreurs.winfo_exists():
+                        self.btn_erreurs.configure(state='disabled')
+                    self.index_status.set(item[1])
                 elif item[0] == 'rebuilding':
                     self.index_status.set('Reconstruction de l’index local…')
                     self._indexed_complete = False
+                    self._sources_verified = False
                     self._invalidate_view()
         except Empty:
             pass
@@ -162,6 +214,10 @@ class IndexedAppMixin:
         self._source_dialog = None
         self.index_status.set('Ouverture de l’index…')
         self._sources_chosen.set()
+
+    def _refresh_indexed_search(self):
+        raw, mode, sn, lot, preferred = self._last_search
+        self._launch_search(raw, mode, sn, lot, preferred=self.selection or preferred, _refresh=True)
 
     def _install_metadata(self, metadata):
         self.file_list = [row['path'] for row in metadata]
@@ -184,11 +240,13 @@ class IndexedAppMixin:
                     return work(cancel)
         def failed(error):
             self.status.set(f'Opération interrompue : {error}')
+            if channel == 'adjacent':
+                self._clear_adjacent(f'Voisins indisponibles : {error}')
         view, serial = self._view_generation, self._selection_serial
         def apply(result):
             if view != self._view_generation:
                 return
-            if channel in ('details', 'adjacent', 'comparison', 'file_view') and serial != self._selection_serial:
+            if channel in ('details', 'adjacent', 'comparison', 'summary_comparison', 'file_view') and serial != self._selection_serial:
                 return
             done(result)
         return self.tasks.submit(channel, compute, apply, failed)
@@ -200,21 +258,22 @@ class IndexedAppMixin:
     def _begin_selection_change(self):
         self._selection_serial += 1
         self.selection = None
+        self._summary_comparison_pending = None
         self.btn_adjacent.configure(state='disabled')
-        for channel in ('details', 'adjacent', 'comparison', 'file_view'):
+        for channel in ('details', 'adjacent', 'comparison', 'summary_comparison', 'file_view'):
             self.tasks.cancel(channel)
         self._clear_adjacent('Recherche en cours…')
-        if hasattr(self, '_update_context_header'):
+        if hasattr(self, '_update_context_header') and not getattr(self, '_suspend_summary', False):
             self._update_context_header()
         self._render_summary(None)
 
     def _clear_adjacent(self, message='Aucune occurrence sélectionnée.'):
         popup = getattr(self, 'adj_popup', None)
         if popup is not None and popup.winfo_exists():
-            for frame in (self.prev_frame, self.current_frame, self.next_frame):
-                for widget in frame.winfo_children():
-                    widget.destroy()
-            tk.Label(self.current_frame, text=message).pack(padx=5, pady=5)
+            if message == 'Recherche en cours…':
+                self.adjacent_view.loading()
+            else:
+                self.adjacent_view.status(message)
 
     def _clear_selection(self):
         self._begin_selection_change()
@@ -239,8 +298,8 @@ class IndexedAppMixin:
         self.destroy()
 
     def _diagnostic_ready(self):
-        if not self._indexed_complete:
-            messagebox.showinfo('Indexation en cours', 'Ce contrôle sera disponible après l’indexation complète des traces.')
+        if not self._indexed_complete or not self._sources_verified:
+            messagebox.showinfo('Indexation en cours', 'Ce contrôle sera disponible après la vérification et l’indexation complète des traces.')
             return False
         return True
 
@@ -256,14 +315,21 @@ class IndexedAppMixin:
     def recherche_avancee_criteria(self, ref, sn=None, codelot=None):
         self._launch_search(ref, 'advanced', sn, codelot)
 
-    def _launch_search(self, raw, mode, sn, lot, preferred=None):
+    def _location_options(self):
+        query = getattr(self, '_last_search', None)
+        return {'location_lot': query[3]} if query and query[1] == 'advanced' and query[3] is not None else {}
+
+    def _launch_search(self, raw, mode, sn, lot, preferred=None, _refresh=False):
         self._last_search = (raw, mode, sn, lot, preferred)
         self._query_serial += 1
         serial = self._query_serial
-        self._begin_selection_change()
-        self._groups = []
-        self.lines = []
-        self._selection_numbers = []
+        keep_selection = _refresh and self.selection is not None
+        if not keep_selection:
+            self._begin_selection_change()
+            self._groups = []
+            self.lines = []
+            self._selection_numbers = []
+        selection_serial = self._selection_serial
         self.status.set('Recherche…' + (' résultats partiels' if not self._indexed_complete else ''))
         def search(cancel):
             groups = self.store.search('ModBusId=' + raw if mode == 'id' else 'RefProduit=' + raw if mode == 'ref' else raw,
@@ -274,11 +340,18 @@ class IndexedAppMixin:
                     if path == preferred.path and any(n == preferred.number for n, _ in hits):
                         index, number = i, preferred.number
                         break
-            details = self.store.details(groups[index][0], number) if groups else None
+            options = {'location_lot': lot} if mode == 'advanced' and lot is not None else {}
+            details = self.store.details(groups[index][0], number, **options) if groups else None
             return groups, index, details
         def apply(result):
             if serial != self._query_serial:
                 return
+            if keep_selection and selection_serial != self._selection_serial:
+                return
+            if keep_selection:
+                details = result[2]
+                if not details or details['path'] != preferred.path or details['row']['number'] != preferred.number:
+                    self._begin_selection_change()
             self._groups, self._group_index, details = result
             self._active_mode = mode
             self._apply_selection(details)
@@ -305,8 +378,9 @@ class IndexedAppMixin:
         if not self._groups or not self.lines or not self._selection_numbers:
             return
         path, number = self._groups[self._group_index][0], self._selection_numbers[self.line_index]
+        options = self._location_options()
         self._begin_selection_change()
-        self._submit('details', lambda cancel: self.store.details(path, number), self._render_indexed_details)
+        self._submit('details', lambda cancel: self.store.details(path, number, **options), self._render_indexed_details)
 
     def _render_indexed_details(self, data):
         if not data:
@@ -346,13 +420,16 @@ class IndexedAppMixin:
                 text.insert('end', 'Aucune ligne GRIPPER GET trouvée.\n', 'none')
                 text.insert('end', '─' * 56 + '\n', 'divider')
         if data['locations']:
-            text.insert('end', '\nDerniers emplacements connus par CodeLot (tous fichiers) :\n', 'lastpute')
+            title = (f"Derniers emplacements connus pour le lot {data['location_lot']} (tous fichiers)"
+                     if data.get('location_lot') is not None else 'Derniers emplacements connus par CodeLot (tous fichiers)')
+            text.insert('end', '\n' + title + ' :\n', 'lastpute')
             for event in data['locations']:
                 when = datetime.fromtimestamp(event['time'])
-                text.insert('end', f"Lot {event['lot_hint']} — {trace_label(event['path'])} @ {when:%d/%m/%Y %H:%M:%S}\n{event['text']}\n", 'lastpute')
+                text.insert('end', f"Lot {event['lot_hint']} — {self._compact_trace_label(event['path'])} @ {when:%d/%m/%Y %H:%M:%S}\n{event['text']}\n", 'lastpute')
         else:
-            text.insert('end', 'Aucun emplacement connu trouvé pour cette référence (tous fichiers).\n', 'none')
-        self.file_label.configure(text='Fichier : ' + trace_label(data['path']))
+            target = f"le lot {data['location_lot']}" if data.get('location_lot') is not None else 'cette référence (tous fichiers)'
+            text.insert('end', f'Aucun emplacement connu trouvé pour {target}.\n', 'none')
+        self.file_label.configure(text='Fichier : ' + self._compact_trace_label(data['path']))
         text.configure(state='disabled')
         if hasattr(self, '_update_context_header'):
             self._update_context_header(data['path'], f'{self.line_index + 1}/{len(self.lines)}')
@@ -372,72 +449,26 @@ class IndexedAppMixin:
         self._render_summary(self.selection.details if self.selection else None)
 
     def _render_summary(self, data):
-        container = getattr(self, 'summary_frame', None)
-        if container is None or not container.winfo_exists():
+        if getattr(self, '_suspend_summary', False):
             return
-        for child in container.winfo_children():
-            child.destroy()
-        self.summary_buttons = {}
-        if getattr(self, 'result_mode', None) and self.result_mode.get() != 'Synthèse':
+        from summary_view import render_summary
+        render_summary(self, data)
+
+    def _load_summary_comparison(self, data):
+        if getattr(self, '_summary_comparison_pending', None) is data:
             return
-        palette = getattr(self, '_palette', {})
-        foreground = palette.get('text', '#172a3a')
-        muted = palette.get('muted', '#526477')
-        surface = palette.get('surface', '#ffffff')
-        if not data:
-            ctk.CTkLabel(container, text='Aucune occurrence sélectionnée.',
-                         text_color=muted, font=('Segoe UI', 12)).pack(padx=16, pady=24)
-            return
-        row = data['row']
-        title = f"{row.get('ref') or 'Sans référence'}   ·   ID {row.get('modbus') or '—'}"
-        ctk.CTkLabel(container, text=title, font=('Segoe UI', 15, 'bold'),
-                     text_color=foreground).pack(anchor='w', padx=16, pady=(12, 8))
-        # The indexed data supplies the real timestamps. Missing events remain explicit.
-        events = [(name, data.get(name)) for name in ('get', 'idpk', 'pute')]
-        events.sort(key=lambda pair: (pair[1] is None,
-                                     pair[1]['time'] if pair[1] else float('inf'),
-                                     pair[1]['number'] if pair[1] else 0))
-        for name, event in events:
-            card = ctk.CTkFrame(container, fg_color=surface, corner_radius=8,
-                                border_width=1, border_color=palette.get('border', '#d6dfe8'))
-            card.pack(fill='x', padx=12, pady=5)
-            title = name.upper()
-            if event:
-                title += '   ' + datetime.fromtimestamp(event['time']).strftime('%d/%m/%Y %H:%M:%S.%f')[:-3]
-            ctk.CTkLabel(card, text=title, text_color=foreground,
-                         font=('Segoe UI', 12, 'bold')).pack(anchor='w', padx=12, pady=(10, 4))
-            if event:
-                detail = event['text']
-                if name == 'idpk' and event.get('dims'):
-                    dimensions = json.loads(event['dims']) if isinstance(event['dims'], str) else event['dims']
-                    detail = '   '.join(f'{key} = {value}' for key, value in dimensions.items()) + '\n' + detail
-                label = ctk.CTkLabel(card, text=detail, text_color=foreground, anchor='w',
-                                     justify='left', font=('Consolas', 11), wraplength=600)
-                label.pack(fill='x', padx=12, pady=4)
-                card.bind('<Configure>', lambda event_, label_=label: label_.configure(
-                    wraplength=max(120, event_.width - 32)), add='+')
-                button = ctk.CTkButton(card, text='Ouvrir la ligne', width=125,
-                                       command=lambda key=name: self._open_selected_event(key))
-                button.pack(anchor='w', padx=12, pady=(4, 10))
-                self.summary_buttons[name] = button
-            else:
-                ctk.CTkLabel(card, text='Non trouvé pour cette occurrence', text_color=muted,
-                             font=('Segoe UI', 11)).pack(anchor='w', padx=12, pady=(0, 10))
-        raw = ManagedTextbox(container, height=90, font=('Consolas', 11), fg_color=surface,
-                              text_color=foreground, wrap='word')
-        raw.pack(fill='x', padx=12, pady=(12, 5))
-        raw.insert('end', 'Ligne originale\n' + row['text'])
-        raw.configure(state='disabled')
-        locations = data.get('locations', [])
-        location_text = '\n\n'.join(
-            f"Lot {event['lot_hint']} · {trace_label(event['path'])}\n{event['text']}"
-            for event in locations)
-        location_box = ManagedTextbox(container, height=130, font=('Consolas', 11),
-                                       fg_color=surface, text_color=foreground, wrap='word')
-        location_box.pack(fill='x', padx=12, pady=(5, 12))
-        location_box.insert('end', 'Derniers emplacements connus par lot\n' +
-                            (location_text or 'Aucun emplacement connu pour cette référence.'))
-        location_box.configure(state='disabled')
+        self._summary_comparison_pending = data
+        def compute(cancel):
+            try:
+                return self.store.comparison_for_occurrence(data['path'], data['row']['number'], cancel)
+            except (sqlite3.DatabaseError, ValueError) as error:
+                return {'error': str(error)}
+        def done(result):
+            self._summary_comparison_pending = None
+            data['_summary_comparison'] = result
+            if self.selection and self.selection.details is data:
+                self._render_summary(data)
+        self._submit('summary_comparison', compute, done)
 
     def _open_selected_event(self, key):
         selection = self.selection
@@ -455,8 +486,9 @@ class IndexedAppMixin:
             return
         self._group_index = target
         path, hits = self._groups[self._group_index]
+        options = self._location_options()
         self._begin_selection_change()
-        self._submit('details', lambda cancel: self.store.details(path, hits[0][0]), self._apply_selection)
+        self._submit('details', lambda cancel: self.store.details(path, hits[0][0], **options), self._apply_selection)
 
     def on_right(self):
         self._move_group(1)
@@ -494,6 +526,11 @@ class IndexedAppMixin:
         self._submit('search', work, done)
 
     def _focus_indexed_ticket(self, path, modbus, ref, show_adjacent=False, number=None):
+        selected = self.selection
+        if selected and selected.path == path and selected.number == number:
+            return
+        if getattr(self, '_active_panel', 'search') != 'search':
+            self.show_search_panel()
         self.tasks.cancel('search')
         self._query_serial += 1
         self._begin_selection_change()
@@ -510,7 +547,10 @@ class IndexedAppMixin:
                 hits = groups[0][1]
                 hits = [(n, text) for n, text in hits if number is None or n == number]
                 groups = [(path, hits[:1])] if hits else []
-            return groups, self.store.details(path, groups[0][1][0][0], anchor=True) if groups else None
+            details = self.store.details(path, groups[0][1][0][0], anchor=True) if groups else None
+            if details and self._sources_verified and self._indexed_complete:
+                details['_summary_comparison'] = self.store.comparison_for_occurrence(path, details['row']['number'], cancel)
+            return groups, details
         def done(result):
             self._groups, details = result; self._group_index = 0; self._apply_selection(details)
             self._active_mode = 'ref'
@@ -548,13 +588,9 @@ class IndexedAppMixin:
             return
         if not self.selection:
             return
-        ref, path = self.selection.reference, self.selection.path
-        def done(pair):
-            if not pair:
-                messagebox.showinfo('Comparaison IDPK', 'Aucune occurrence précédente trouvée dans les fichiers plus anciens.')
-                return
-            self._render_indexed_comparison(ref, pair)
-        self._submit('comparison', lambda cancel: self.store.comparison(path, ref), done)
+        ref, path, number = self.selection.reference, self.selection.path, self.selection.number
+        self._submit('comparison', lambda cancel: self.store.comparison_for_occurrence(path, number, cancel),
+                     lambda result: self._render_indexed_comparison(ref, result))
 
     def open_adjacent_for_current_occurrence(self):
         if self.selection and self.selection.modbus:
@@ -567,12 +603,43 @@ class IndexedAppMixin:
         selection = self.selection
         if selection and selection.path == filepath and selection.modbus == str(target_id):
             number, reference = selection.number, selection.reference
+        from adjacent_view import AdjacentView
+        from window_placement import show_centered_popup, monitor_work_area, native_window_bounds
+        popup = getattr(self, 'adj_popup', None)
+        if popup is None or not popup.winfo_exists():
+            popup = self.adj_popup = tk.Toplevel(self)
+            popup.title('IDs adjacents — R1 / R2')
+            apply_icon(popup)
+            self.adjacent_view = AdjacentView(popup, self)
+            self.adjacent_view.pack(fill='both', expand=True)
+            def close():
+                self.tasks.cancel('adjacent')
+                popup.destroy()
+            popup.protocol('WM_DELETE_WINDOW', close)
+            self.adjacent_view.close_button.configure(command=close)
+            show_centered_popup(popup, self, 1180, 720)
+            work = monitor_work_area(self)
+            extra_width = extra_height = 0
+            if os.name == 'nt':
+                _, bounds = native_window_bounds(popup)
+                extra_width = bounds[2] - bounds[0] - popup.winfo_width()
+                extra_height = bounds[3] - bounds[1] - popup.winfo_height()
+            popup.maxsize(work[2] - work[0] - extra_width, work[3] - work[1] - extra_height)
+        counts = getattr(self, '_adjacent_counts', (5, 5))
+        self.adjacent_view.loading('Actualisation des voisins R1 / R2…')
         def done(data):
+            if self.adj_popup is not popup or not popup.winfo_exists():
+                return
+            if counts != getattr(self, '_adjacent_counts', (5, 5)):
+                self.open_adjacent_for_current_occurrence()
+                return
             if data:
                 self._render_indexed_adjacent(str(target_id), filepath, data)
             else:
                 self._clear_adjacent('Occurrence indisponible ; relancez la recherche.')
-        self._submit('adjacent', lambda cancel: self.store.adjacent(filepath, str(target_id), number, reference), done)
+        self._submit('adjacent', lambda cancel: self.store.paired_adjacent(
+            filepath, str(target_id), number, reference, cancel,
+            before_count=counts[0], after_count=counts[1]), done)
 
     def _open_exact_gripper_line(self, event, gripper_type):
         key = 'get' if gripper_type == 'GRIPPER GET' else 'pute'
@@ -589,7 +656,7 @@ class IndexedAppMixin:
             messagebox.showinfo('Info', 'Aucun fichier de trace disponible.')
             return
         def work(cancel):
-            if not os.path.isfile(path):
+            if not isinstance(path, TraceRef) and not os.path.isfile(path):
                 return None, 'Le fichier de trace a été supprimé ou déplacé.'
             lines = self.store.file_lines(path)
             selected = highlight
@@ -688,20 +755,18 @@ class IndexedAppMixin:
 
     def _indexed_tracking(self):
         ref = self.tracking_keyword.get().strip()
+        widget = self.tracking_view
+        widget.begin(ref)
+        self._tracking_loading = bool(ref)
         if not ref:
+            self.tasks.cancel('tracking')
             return
         def done(rows):
-            widget = self.tracking_txt
             if not widget.winfo_exists():
                 return
-            widget.configure(state='normal'); widget.delete('1.0', 'end')
-            def texts():
-                for row in rows:
-                    when = datetime.fromtimestamp(row['time']); _, hour = timestamp_parts(row['text'])
-                    face = re.search(r'(face:\d+\s*\d*)', row['text'])
-                    yield f"{when:%d/%m/%y} | {hour} | {trace_label(row['path'])} | PUTE | {face[1] if face else ''}\n"
-            self._insert_text_batches(widget, texts() if rows else ['Aucune opération PUTE trouvée pour cette référence.\n'],
-                                      lambda: widget.configure(state='disabled'))
+            widget.show_results(rows)
+            self._tracking_loading = False
+            self._tracking_revision = getattr(self, '_index_content_revision', 0)
         self._submit('tracking', lambda cancel: self.store.tracking(ref), done)
 
     def check_errors(self):
@@ -714,7 +779,8 @@ class IndexedAppMixin:
                 when = datetime.fromtimestamp(row['time'])
                 errors.append({'file': trace_label(row['path']), 'filepath': row['path'], 'modbus_id': row['modbus'],
                                'ref': row['ref'], 'number': row['number'], 'date': match[1] if match else when.strftime('%d/%m/%Y'),
-                               'heure': match[2] if match else when.strftime('%H:%M:%S')})
+                               'heure': match[2] if match else when.strftime('%H:%M:%S'),
+                               'sn': row.get('sn'), 'lot': row.get('lot'), 'text': row['text']})
             self._render_robot_errors(errors, [trace_label(p) for p in self.file_list])
         self._submit('robot_errors', lambda cancel: self.store.robot_errors(), done)
 
@@ -723,7 +789,7 @@ class IndexedAppMixin:
         if not ref:
             messagebox.showwarning('Attention', 'Veuillez entrer une référence à rechercher.'); return
         self.last_convoyage_ref = ref
-        self._submit('convoyage', lambda cancel: (self.store.convoyage_summary(ref, only_filepath), self.store.convoyage_steps(ref)),
+        self._submit('convoyage', lambda cancel: (self.store.convoyage_summary(ref, only_filepath), []),
                      lambda result: self._render_indexed_convoyage(ref, geometry_override, *result))
 
     def convoyage_errors_action(self):
@@ -731,5 +797,9 @@ class IndexedAppMixin:
             self._submit('convoyage_errors', lambda cancel: self.store.convoyage_errors(), self._render_convoyage_errors)
 
     def show_convoyage_details(self, ref):
-        self._submit('convoyage_details', lambda cancel: self.store.convoyage_recap(ref),
-                     lambda recap: self._render_indexed_convoyage_recap(ref, recap))
+        def work(cancel):
+            recap = self.store.convoyage_recap(ref)
+            paths = list(dict.fromkeys(row['path'] for row in self.store.modbus_rows(ref)))
+            return recap, paths
+        self._submit('convoyage_details', work,
+                     lambda result: self._render_indexed_convoyage_recap(ref, *result))

@@ -83,7 +83,7 @@ def main():
             assert gui.ttk.Style(app).lookup('Adjacent.Treeview', 'borderwidth')==0
             assert not adjacent.validation.winfo_ismapped(), 'No empty validation row'
             identities = [str(panel['tree']) for panel in adjacent.panels]
-            adjacent.presets[(5, 30)].invoke()
+            adjacent.before_var.set('5'); adjacent.after_var.set('30'); adjacent.apply_button.invoke()
             pump(lambda: adjacent.data['after_count']==30)
             assert identities==[str(panel['tree']) for panel in adjacent.panels]
             snapshot(adjacent, 'popup_adjacent_light_20261019.png')

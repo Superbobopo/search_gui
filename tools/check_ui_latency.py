@@ -86,21 +86,6 @@ def main():
                          if hasattr(w, 'selection_text') and w.cget('text') == '343272')
             field.selection_text.tag_add('sel', '1.0', '1.3')
             for _ in range(3):
-                sample('summary_to_classic', app.result_switch._buttons_dict['Classique'].invoke)
-                sample('classic_to_summary', app.result_switch._buttons_dict['Synthèse'].invoke)
-                assert app.selection is selection
-                assert app.summary_targets == targets
-                assert field.selection_text.get('sel.first', 'sel.last') == '343'
-            profiler = cProfile.Profile()
-            profiler.enable()
-            app.result_switch._buttons_dict['Classique'].invoke()
-            app.result_switch._buttons_dict['Synthèse'].invoke()
-            pump()
-            profiler.disable()
-            stream = io.StringIO()
-            pstats.Stats(profiler, stream=stream).strip_dirs().sort_stats('cumtime').print_stats(14)
-            report['profile_modes'] = stream.getvalue()
-            for _ in range(3):
                 sample('search_to_tracking', app.btn_tracking_robot.invoke)
                 sample('tracking_to_convoyage', app.btn_convoyage_menu.invoke)
                 sample('convoyage_to_search', app.btn_search_menu.invoke)

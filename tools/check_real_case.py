@@ -79,7 +79,7 @@ def main():
             app._focus_indexed_ticket(source, '683', 'A0061256AB', number=number)
             pump(lambda: app.selection is not None)
             assert app.selection.number == 65168
-            assert '11:00:32' in app.txt.get('1.0', 'end')
+            assert '11:00:32' in rendered_summary_text(app)
             assert '11:00:36.9' in app.selection.details['get']['text']
             assert '11:00:52.3' in app.selection.details['pute']['text']
             app.btn_adjacent.invoke(); pump(lambda: app.adj_popup is not None)
@@ -90,15 +90,8 @@ def main():
             stamp = 2000
             for key in ('get', 'pute'):
                 event = app.selection.details[key]
-                pos = f"{app.txt.tag_ranges('clickable_' + key)[0]} +1lines +5chars"
-                app.txt.see(pos); app.update()
-                box = app.txt.bbox(pos); assert box
-                x, y = box[0] + 2, box[1] + 2
-                app.txt.event_generate('<Motion>', x=x, y=y)
                 previous = set(app.winfo_children())
-                for i in range(2):
-                    app.txt.event_generate('<ButtonPress-1>', x=x, y=y, time=stamp + i * 100)
-                    app.txt.event_generate('<ButtonRelease-1>', x=x, y=y, time=stamp + i * 100 + 20)
+                click_summary(app, key, stamp=stamp)
                 stamp += 1000
                 def opened():
                     return [w for w in app.winfo_children() if w not in previous and isinstance(w, gui.tk.Toplevel)]
@@ -124,6 +117,8 @@ def main():
     print('Cache version 1 et traces inchanges, aucune synchronisation/reindexation', flush=True)
 
 
+from tools.ui_test_support import run_gui_check
+from tools.summary_test_support import rendered_summary_text, click_summary
+
 if __name__ == '__main__':
-    from tools.ui_test_support import run_gui_check
     run_gui_check(main)

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
 from unittest.mock import patch
 
@@ -55,16 +56,117 @@ def main():
 
         try:
             pump(lambda: app._sources_verified)
+            app.btn_gear.invoke()
+            app.sn_entry.insert(0, 'SEARCH_SN')
+            app.codelot_entry.insert(0, 'SEARCH_LOT')
             app.btn_tracking_robot.invoke()
             view = app.tracking_view
-            app.keyword.delete(0, 'end')
-            app.keyword.insert(0, 'A0061574AC')
-            app.btn_search.invoke()
+            view.reference_entry.delete(0, 'end')
+            view.reference_entry.insert(0, 'A0061574AC')
+            view.search_button.invoke()
             pump(lambda: len(view.rows) == 3 and view._pending is None)
+            assert set(app.mode_radios)=={'id', 'ref'}
+            assert not hasattr(app, 'btn_open_trace')
+            assert app.btn_search_menu.winfo_y()<app.btn_convoyage_menu.winfo_y()<app.btn_tracking_robot.winfo_y()
+            view.sn_entry.insert(0, '343272')
+            view.lot_entry.insert(0, '261013.127')
+            view.search_button.invoke()
+            pump(lambda: not app._tracking_loading and view._pending is None)
+            assert len(view.rows)==3
+            view.sn_entry.delete(0, 'end'); view.sn_entry.insert(0, '3432720')
+            view.sn_entry._entry.focus_force()
+            app.update()
+            view.sn_entry._entry.event_generate('<Return>')
+            pump(lambda: not app._tracking_loading and view._pending is None)
+            assert not view.rows
+            view.sn_entry.delete(0, 'end'); view.sn_entry.insert(0, '343272')
+            view.search_button.invoke()
+            pump(lambda: not app._tracking_loading and view._pending is None)
+            assert len(view.rows)==3
+            app.btn_search_menu.invoke(); app.update()
+            assert app.search_bar.winfo_ismapped() and app._active_panel=='search'
+            assert app.sn_entry.get()=='SEARCH_SN' and app.codelot_entry.get()=='SEARCH_LOT'
+            app.btn_tracking_robot.invoke(); app.update()
+            assert view.sn_entry.get()=='343272' and view.lot_entry.get()=='261013.127'
+            assert not app.search_bar.winfo_ismapped()
+            view.sn_entry.delete(0, 'end'); view.sn_entry.insert(0, 'UNVALIDATED')
+            app.btn_search_menu.invoke(); app.update()
+            app._tracking_needs_refresh = True
+            app.btn_tracking_robot.invoke()
+            pump(lambda: not app._tracking_loading and view._pending is None)
+            assert len(view.rows)==3 and 'UNVALIDATED' not in view.heading.cget('text')
+            assert view.sn_entry.get()=='UNVALIDATED'
+            view.sn_entry.delete(0, 'end'); view.sn_entry.insert(0, '343272')
+            def criteria(ref='', sn='', lot='', enter=None):
+                for entry, value in ((view.reference_entry, ref), (view.sn_entry, sn), (view.lot_entry, lot)):
+                    entry.delete(0, 'end'); entry.insert(0, value)
+                if enter is not None:
+                    entry = (view.reference_entry, view.sn_entry, view.lot_entry)[enter]
+                    entry._entry.focus_force(); app.update()
+                    entry._entry.event_generate('<Return>')
+                else:
+                    view.search_button.invoke()
+                pump(lambda: not app._tracking_loading and view._pending is None)
+
+            for ref, sn, lot, entry in (('A0061574AC','','',0), ('','343272','',1),
+                    ('','','261013.127',2), ('A0061574AC','343272','',None),
+                    ('A0061574AC','','261013.127',None), ('','343272','261013.127',None),
+                    ('A0061574AC','343272','261013.127',None)):
+                criteria(ref, sn, lot, enter=entry)
+                assert len(view.rows)==3
+            with patch.object(app.store, 'tracking', wraps=app.store.tracking) as query:
+                criteria()
+                assert query.call_count==0 and not view.rows
+                assert 'Saisissez au moins' in view.count.cget('text')
+            criteria(sn='343272')
+            assert view.reference_entry.get()=='' and len(view.rows)==3
+            view.sn_entry.delete(0, 'end'); view.sn_entry.insert(0, 'UNVALIDATED')
+            app.btn_search_menu.invoke(); app.update()
+            app._tracking_needs_refresh = True
+            app.btn_tracking_robot.invoke()
+            pump(lambda: not app._tracking_loading and view._pending is None)
+            assert len(view.rows)==3 and 'UNVALIDATED' not in view.heading.cget('text')
+            criteria(sn='343272')
+            # A delayed old request must never replace the newest criteria.
+            started, release, finished = threading.Event(), threading.Event(), threading.Event()
+            original_tracking = app.store.tracking
+            def delayed(*args, **kw):
+                if kw.get('sn')=='DELAYED':
+                    try:
+                        started.set(); release.wait(4)
+                        return original_tracking(*args, **kw)
+                    finally:
+                        finished.set()
+                return original_tracking(*args, **kw)
+            with patch.object(app.store, 'tracking', side_effect=delayed):
+                view.sn_entry.delete(0, 'end'); view.sn_entry.insert(0, 'DELAYED')
+                view.search_button.invoke(); pump(started.is_set)
+                criteria(sn='343272')
+                release.set()
+                pump(finished.is_set); app.update()
+                assert len(view.rows)==3 and 'DELAYED' not in view.heading.cget('text')
+            with patch.object(app.store, 'tracking', side_effect=RuntimeError('temporary failure')):
+                criteria(sn='343272')
+                assert 'indisponible' in view.count.cget('text')
+            criteria(sn='343272')
+            from tools.native_test_capture import widget_image, color_pixels
+            output = Path(__file__).resolve().parents[1]/'.benchmark'
+            output.mkdir(exist_ok=True)
+            for size, theme in (('1180x820', 'Clair'), ('800x820', 'Sombre')):
+                app.geometry(size); app._change_theme(theme)
+                until = time.monotonic()+.2
+                pump(lambda: time.monotonic()>=until)
+                assert all(entry.winfo_ismapped() for _, entry in view.form_fields)
+                if size.startswith('800'):
+                    assert view.form_fields[2][0].grid_info()['row']==1, (app.winfo_width(), view.winfo_width(), view.form.winfo_width(), view._form_narrow)
+                image = widget_image(app)
+                assert color_pixels(image, app._palette['text'])>200
+                image.save(output/f'tracking_criteria_{theme}_20261020.png')
+            app.geometry('1180x820'); app._change_theme('Clair'); app.update()
             assert [view.rows[k]['time'] for k in view.rows] == sorted(
                 [r['time'] for r in view.rows.values()], reverse=True)
             assert {view.values[k][2] for k in view.rows} == {'R1', 'R2'}
-            assert view.tree['columns'] == ('date', 'hour', 'robot', 'location', 'trace')
+            assert view.tree['columns'] == ('date', 'hour', 'robot', 'location', 'trace', 'ref', 'sn', 'lot')
             assert view.tree.item('0', 'tags') != view.tree.item('1', 'tags')
             assert '3 dépôts' in view.count.cget('text') and '3 traces' in app.status.get()
             old_key = next(k for k, row in view.rows.items() if str(row['path']).endswith('.old'))
@@ -77,6 +179,13 @@ def main():
             pump(lambda: '13/10/2026' in view.detail_title.cget('text'))
             assert event['text'] == view.detail_event.selection_text.get('1.0', 'end-1c')
             assert '.old' in view.detail_source.cget('text')
+            identity_text = view.detail_identity.selection_text
+            sn_start = identity_text.search('343272', '1.0')
+            assert sn_start
+            identity_text.tag_add('sel', sn_start, sn_start+'+6c')
+            with patch.object(identity_text, 'clipboard_clear'), patch.object(identity_text, 'clipboard_append') as copy:
+                identity_text.event_generate('<<Copy>>')
+                copy.assert_called_once_with('343272')
             with patch.object(view, 'clipboard_clear') as clear, patch.object(view, 'clipboard_append') as copy:
                 view.tree.focus_force()
                 view.tree.event_generate('<Control-KeyPress-c>')
@@ -124,9 +233,9 @@ def main():
             view.begin('empty')
             pump()
             assert not view.rows and not view.tree.get_children()
-            app.keyword.delete(0, 'end')
-            app.keyword.insert(0, 'ABSENT')
-            app.btn_search.invoke()
+            view.reference_entry.delete(0, 'end')
+            view.reference_entry.insert(0, 'ABSENT')
+            view.search_button.invoke()
             pump(lambda: 'Aucun dépôt' in view.count.cget('text'))
             assert not view.detail_event.selection_text.get('1.0', 'end-1c')
             # Dispose during a scheduled append: no Tk callback may reach destroyed widgets.

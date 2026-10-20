@@ -51,8 +51,8 @@ class SourceChoiceTests(unittest.TestCase):
                 root.mkdir()
             (roots[0] / 'TracOmega.txt').write_text('one')
             (roots[1] / 'TracOmega.sav').write_text('ignored')
-            (roots[2] / 'R2').mkdir()
-            (roots[2] / 'R2' / 'TracMODBUS.txt').write_text('two')
+            (roots[2] / 'R1').mkdir()
+            (roots[2] / 'R1' / 'TracMODBUS.txt').write_text('two')
             with patch.object(trace_sources, 'trace_directories', return_value=roots):
                 self.assertEqual(trace_sources.available_trace_sources(),
                                  (('Apoteka', str(roots[0])), ('Bureau', str(roots[2]))))

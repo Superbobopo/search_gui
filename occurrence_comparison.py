@@ -1,5 +1,6 @@
 """Exact ticket/GET/IDPK associations and bounded, publication-aware query caches."""
 from collections import OrderedDict, defaultdict
+from contextlib import contextmanager
 from datetime import datetime
 import json
 import os
@@ -15,6 +16,26 @@ class AnalysisCache:
         self.items = OrderedDict()
         self.weight = 0
         self.budget = budget
+        self.running = {}
+
+    @contextmanager
+    def work_lock(self, key, check):
+        """One worker per analysis key; waiting workers remain cancellable."""
+        while True:
+            check()
+            with self.lock:
+                event = self.running.get(key)
+                if event is None:
+                    event = self.running[key] = threading.Event()
+                    break
+            event.wait(.02)
+        try:
+            check()
+            yield
+        finally:
+            with self.lock:
+                self.running.pop(key, None)
+                event.set()
 
     def get(self, key):
         with self.lock:
@@ -86,6 +107,96 @@ def _identity(row):
     return row.get('ref'), row.get('sn'), row.get('lot')
 
 
+def file_associations(store, path, revision, cancel=None, *, references, rows=None):
+    """Only associate requested identities; never expand to every file reference."""
+    refs = set(references)
+    cache = store._analysis_cache
+    with cache.work_lock(('association_build', revision, path), lambda: store._check_cancel(cancel)):
+        result = {ref: cache.get(('association', revision, path, ref)) for ref in refs}
+        missing = {ref for ref, value in result.items() if value is None}
+        if not missing:
+            return result
+        if rows is None:
+            marks = ','.join('?' for _ in missing)
+            rows = store._rows('''SELECT l.*,f.path FROM lines l JOIN files f ON f.id=l.file_id
+                WHERE f.path=? AND l.ref IN (''' + marks + ') AND l.modbus IS NOT NULL UNION ALL '
+                + 'SELECT l.*,f.path FROM lines l JOIN files f ON f.id=l.file_id WHERE f.path=? '
+                + 'AND l.op_ref IN (' + marks + ') AND (l.loading=1 OR l.dims IS NOT NULL)',
+                (path, *missing, path, *missing), cancel)
+        grouped = defaultdict(list)
+        for row in rows:
+            ref = row['ref'] if row['modbus'] is not None else row['op_ref']
+            if ref in missing:
+                grouped[ref].append(row)
+        from get_diagnostics import diagnostics
+        # Ordinary ticket -> GET -> IDPK histories need no gripper-response scan.
+        # Only an unowned GET carrying a measurement can require retry ownership.
+        retry_refs = set()
+        for ref, group in grouped.items():
+            group.sort(key=lambda row: row['number'])
+            pending = False
+            active_owned = None
+            seen_owned = False
+            for row in group:
+                store._check_cancel(cancel)
+                if row['modbus'] is not None:
+                    pending = True
+                elif row['loading']:
+                    active_owned = pending
+                    seen_owned = seen_owned or pending
+                    pending = False
+                elif row['dims'] and active_owned is False and seen_owned:
+                    retry_refs.add(ref)
+                    break
+        tickets = [r for ref in retry_refs for r in grouped[ref] if r['modbus'] is not None]
+        outcomes = diagnostics(store, tickets, revision, cancel) if tickets else {}
+        for ref in missing:
+            store._check_cancel(cancel)
+            group = grouped[ref]
+            tickets = [row for row in group if row['modbus'] is not None]
+            associations, records = {}, []
+            retry_owners = {}
+            for owner in tickets:
+                outcome = outcomes.get((path, owner['number']), {})
+                for attempt in outcome.get('attempts', [])[1:]:
+                    retry_owners[attempt['get']['number']] = owner
+            owned_records = {}
+            ticket = active = None
+            for row in group:
+                if row['modbus'] is not None:
+                    ticket = row
+                elif row['loading']:
+                    owner = ticket if ticket is not None else retry_owners.get(row['number'])
+                    active = owned_records.get(owner['number']) if owner is not None else None
+                    if active is None:
+                        active = {'ticket': owner, 'get': row, 'measurements': []}
+                        if owner is not None:
+                            owned_records[owner['number']] = active
+                            associations.setdefault((path, owner['number']), []).append(active)
+                            records.append(active)
+                    # A later GET without a fresh ticket cannot inherit this
+                    # ticket's SN/lot. It may be another box of the same SKU.
+                    ticket = None
+                elif row['dims'] and active is not None:
+                    active['measurements'].append(row)
+            payload = associations, records
+            result[ref] = payload
+            cache.put(('association', revision, path, ref), payload, len(group)+len(records))
+        return result
+
+
+def current_measurement(store, ticket, revision, cancel=None):
+    payload = file_associations(store, ticket['path'], revision, cancel, references=[ticket['ref']]).get(ticket['ref'], ({}, []))
+    selected = payload[0].get((ticket['path'], ticket['number']), [])
+    measurements = [event for item in selected for event in item['measurements']]
+    ambiguous = len(selected)>1 or len(measurements)>1
+    return dict(revision=revision, status='ambiguous_measurement' if ambiguous else
+                'current' if measurements else 'missing_measurement',
+                current=measurements[0] if measurements and not ambiguous else None,
+                message='Plusieurs mesures possibles pour cette occurrence.' if ambiguous else
+                '' if measurements else 'Aucune mesure IDPK rattachable à cette occurrence.')
+
+
 def _load_references(store, scope, references, revision, cancel):
     loaded = {ref: store._analysis_cache.get(('reference', revision, scope, ref)) for ref in references}
     missing = [ref for ref, payload in loaded.items() if payload is None]
@@ -107,30 +218,24 @@ def _load_references(store, scope, references, revision, cancel):
                 AND (l.loading=1 OR l.dims IS NOT NULL)''', (*paths, *batch, *paths, *batch), cancel)
             for row in rows:
                 grouped[row['ref'] if row['modbus'] is not None else row['op_ref']].append(row)
+        needed = defaultdict(set)
+        payloads = {ref: ({}, []) for ref in batch}
         for ref in batch:
-            by_file = defaultdict(list)
             for row in grouped[ref]:
-                by_file[row['path']].append(row)
-            associations, records = {}, []
-            for path, rows in by_file.items():
-                ticket = active = None
-                for row in sorted(rows, key=lambda item: item['number']):
-                    if row['modbus'] is not None:
-                        ticket = row
-                    elif row['loading']:
-                        active = {'ticket': ticket, 'get': row, 'measurements': []}
-                        if ticket is not None:
-                            associations.setdefault((path, ticket['number']), []).append(active)
-                            records.append(active)
-                        # A later GET without a fresh ticket cannot inherit this
-                        # ticket's SN/lot. It may be another box of the same SKU.
-                        ticket = None
-                    elif row['dims'] and active is not None:
-                        active['measurements'].append(row)
-            payload = (associations, records)
+                needed[row['path']].add(ref)
+        # A large file may exceed the cache budget. Still analyze it only once
+        # per batch, rather than once per requested reference.
+        for path, needed_refs in needed.items():
+            input_rows = [row for ref in needed_refs for row in grouped[ref] if row['path']==path]
+            local_file = file_associations(store, path, revision, cancel, references=needed_refs, rows=input_rows)
+            for ref in needed_refs:
+                local = local_file.get(ref, ({}, []))
+                payloads[ref][0].update(local[0])
+                payloads[ref][1].extend(local[1])
+        for ref, payload in payloads.items():
             loaded[ref] = payload
             store._analysis_cache.put(('reference', revision, scope, ref), payload,
-                                      len(grouped[ref]) + len(records))
+                                      len(grouped[ref]) + len(payload[1]))
     return loaded
 
 
@@ -156,7 +261,7 @@ def compare(store, ticket, revision, cancel=None, payload=None):
         return cached
     store._check_cancel(cancel)
     result = {'status': 'missing_measurement', 'different': False, 'pair': None, 'current': None,
-              'identity': _identity(ticket), 'message': 'Aucune mesure IDPK rattachable à cette occurrence.',
+              'revision': revision, 'identity': _identity(ticket), 'message': 'Aucune mesure IDPK rattachable à cette occurrence.',
               'basis_label': 'Dernière mesure comparable', 'candidates': []}
     scope = robot_scope(ticket['path'])[0]
     if not ticket.get('ref'):

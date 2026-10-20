@@ -196,7 +196,11 @@ def main():
             screenshot(comparison, 'idpk_unified_20261019.png')
             button_style(comparison)
             comparison.close_button.invoke(); pump()
-            app.btn_open_trace.invoke(); pump(lambda: bool(popups('trace_controller')))
+            event_text = app.summary_targets['get'].selection_text
+            for i in range(2):
+                event_text.event_generate('<ButtonPress-1>', x=15, y=10, time=200000+i*100)
+                event_text.event_generate('<ButtonRelease-1>', x=15, y=10, time=200020+i*100)
+            pump(lambda: bool(popups('trace_controller')))
             trace_window = popups('trace_controller')[0]
             controller = trace_window.trace_controller
             pump(lambda: controller.loaded)
@@ -225,7 +229,7 @@ def main():
             close_extras()
             app.btn_tracking_robot.invoke(); pump()
             app.tracking_keyword.delete(0,'end'); app.tracking_keyword.insert(0,'MEASURE')
-            app.btn_search.invoke(); pump(lambda: bool(app.tracking_view.rows))
+            app.tracking_view.search_button.invoke(); pump(lambda: bool(app.tracking_view.rows))
             assert len(app.tracking_view.rows)==2
             button_style(app)
             print('OK UI commune : erreurs robot R1/R2, detail/SN/lot/copie, archives et navigation exacte, '

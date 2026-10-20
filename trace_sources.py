@@ -106,6 +106,12 @@ def available_trace_sources():
     return tuple(found)
 
 
+def ignored_r2_modbus(path):
+    """R1 supplies the shared MODBUS trace; never ingest the R2 copy."""
+    return (ntpath.basename(os.fspath(path)).lower().startswith('tracmodbus')
+            and robot_scope(path)[1] == 'R2')
+
+
 def discover_trace_files(prefix=None, directories=None):
     """Return distinct absolute paths; missing or inaccessible roots are skipped."""
     paths = {}
@@ -120,6 +126,8 @@ def discover_trace_files(prefix=None, directories=None):
                 if prefix and not name.startswith(prefix.lower()):
                     continue
                 path = os.path.abspath(os.path.join(root, filename))
+                if ignored_r2_modbus(path):
+                    continue
                 paths.setdefault(path_key(path), path)
     return sorted(paths.values(), key=path_key)
 

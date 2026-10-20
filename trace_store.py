@@ -1,7 +1,7 @@
 """Persistent, incrementally refreshed trace index. No Tk dependencies."""
 
 from collections import OrderedDict, defaultdict
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 import codecs
 import hashlib
@@ -18,10 +18,11 @@ from types import SimpleNamespace
 
 from trace_parser import (parse_fields, parse_idpk, GRIPPER_RE, line_datetime, read_trace, timestamp_parts,
                           trace_start_datetime, parse_modbus_line)
-from trace_sources import application_directory, path_key, trace_label, robot_scope
+from trace_sources import application_directory, path_key, trace_label, robot_scope, ignored_r2_modbus
 from trace_identity import TraceRef
 from omega_history import OmegaHistory, history_path, under, HISTORY_APPLICATION_ID, HistoryUnavailable
 from occurrence_comparison import AnalysisCache, comparisons as compare_tickets, metadata as analysis_metadata, timed as analysis_timed
+from get_diagnostics import diagnostics as get_diagnostics
 
 SCHEMA_VERSION = 1
 CHECKPOINTS = dict(zip(
@@ -160,6 +161,13 @@ class TraceStore:
             if not defer_history:
                 self.prepare_history(stop)
         self._initialize()
+        if self.directories is not None:
+            # Remove obsolete R2 copies before publishing the existing cache.
+            with self.connection() as db, db:
+                ignored = [(row['id'],) for row in db.execute('SELECT id,path FROM files')
+                           if ignored_r2_modbus(row['path'])]
+                if ignored:
+                    db.executemany('DELETE FROM files WHERE id=?', ignored)
 
     def prepare_history(self, stop=None):
         """Recover legacy snapshots after cache availability, once per session."""
@@ -919,8 +927,8 @@ class TraceStore:
             return None
         row = selected[0]; reference = row['ref']
         row['time'] = line_datetime(row['text'], datetime.fromtimestamp(row['start'])).timestamp()
-        gets = self.events(path, reference, 'GET', after=number if anchor else -1, loading=True)
-        get = gets[0] if gets else None
+        diagnostic = self.get_for_occurrence(path, number)
+        get = diagnostic['get']
         putes = self.events(path, reference, 'PUTE', after=get['number']) if get else []
         # With a lot criterion, choose the last PUTE for that exact lot before
         # deduplication; a later operation for another lot must not hide it.
@@ -936,11 +944,70 @@ class TraceStore:
             if location['lot_hint']:
                 lots.setdefault(location['lot_hint'], location)
         idpk = self.measurement(path, reference, get['number']) if get else None
-        return {'row': row, 'path': path, 'get': get, 'pute': putes[0] if putes else None,
+        return {'row': row, 'path': path, 'get': get, 'pute': putes[0] if putes else None, 'get_diagnostic': diagnostic,
                 'idpk': idpk, 'locations': list(lots.values()), 'location_lot': location_lot}
 
-    def tracking(self, reference):
-        return self._rows("SELECT l.*,f.path FROM lines l JOIN files f ON f.id=l.file_id WHERE op='PUTE' AND op_ref=? ORDER BY time DESC", (reference,))
+    def get_for_occurrence(self, path, number, cancel=None):
+        with (nullcontext() if getattr(self._local, 'snapshot', None) is not None else self.snapshot()):
+            self._check_cancel(cancel)
+            revision = self.analysis_revision()
+            key = ('get_ticket', revision, path, number)
+            cached = self._analysis_cache.get(key)
+            if cached is not None:
+                return cached
+            rows = self._rows('''SELECT l.ref,l.text FROM lines l JOIN files f ON f.id=l.file_id
+                WHERE f.path=? AND l.number=?''', (path, number), cancel)
+            ticket = dict(path=path, number=number, ref=rows[0]['ref'] if rows else None)
+            result = get_diagnostics(self, [ticket], revision, cancel)[(path, number)]
+            return self._analysis_cache.put(key, result, 1+len(result['attempts'])+len(result['responses']))
+
+    def tracking(self, reference=None, sn=None, lot=None, cancel=None):
+        reference, sn, lot = (str(v).strip() or None if v is not None else None
+                              for v in (reference, sn, lot))
+        if not any((reference, sn, lot)):
+            return []
+        with (nullcontext() if getattr(self._local, 'snapshot', None) is not None else self.snapshot()):
+            if reference:
+                references = [reference]
+            elif sn:
+                references = [r['ref'] for r in self._rows(
+                    'SELECT DISTINCT ref FROM lines WHERE sn=? AND ref IS NOT NULL AND modbus IS NOT NULL', (sn,), cancel)]
+            else:
+                references = [r['reference'] for r in self._rows(
+                    """SELECT DISTINCT ref AS reference FROM lines WHERE lot=? AND ref IS NOT NULL AND modbus IS NOT NULL
+                    UNION SELECT DISTINCT op_ref AS reference FROM lines WHERE op='PUTE' AND lot_hint=? AND op_ref IS NOT NULL""",
+                    (lot, lot), cancel)]
+            result = []
+            for start in range(0, len(references), 200):
+                self._check_cancel(cancel)
+                batch = references[start:start+200]
+                marks = ','.join('?' for _ in batch)
+                events = self._rows("""SELECT l.*,f.path FROM lines l JOIN files f ON f.id=l.file_id
+                    WHERE (l.ref IN (""" + marks + """) AND l.modbus IS NOT NULL)
+                    OR (l.op_ref IN (""" + marks + """) AND l.op IN ('GET','PUTE'))
+                    ORDER BY l.file_id,l.number""", (*batch, *batch), cancel)
+                pending, current = {}, {}
+                for row in events:
+                    self._check_cancel(cancel)
+                    if row['ref'] is not None and row['modbus'] is not None:
+                        pending[(row['file_id'], row['ref'])] = row
+                        continue
+                    key = row['file_id'], row['op_ref']
+                    if row['op'] == 'GET':
+                        ticket = pending.pop(key, None)
+                        current[key] = ticket if row['loading'] else None
+                    elif row['op'] == 'PUTE':
+                        ticket = current.pop(key, None) or {}
+                        known_sn = ticket.get('sn')
+                        known_lot = ticket.get('lot') or row.get('lot_hint')
+                        if sn is not None and known_sn != sn:
+                            continue
+                        if lot is not None and known_lot != lot:
+                            continue
+                        row.update(ref=row['op_ref'], sn=known_sn, lot=known_lot)
+                        result.append(row)
+            result.sort(key=lambda row: row['time'], reverse=True)
+            return result
 
     def robot_errors(self):
         return self._rows("""SELECT l.*,f.path FROM lines l JOIN files f ON f.id=l.file_id
@@ -960,9 +1027,25 @@ class TraceStore:
         return self._rows(sql + ' ORDER BY f.end DESC,f.path DESC,l.number', params)
 
     def convoyage_steps(self, reference, path=None):
+        parsed = [(row, parse_modbus_line(row['text'])) for row in self.modbus_rows(reference, path)]
+        return self._convoyage_steps(reference, parsed)
+
+    def convoyage_summary(self, reference, path=None):
+        parsed = [(row, parse_modbus_line(row['text'])) for row in self.modbus_rows(reference, path)]
+        return self._convoyage_summary(reference, parsed)
+
+    def convoyage_details(self, reference, path=None):
+        """Summary and steps from one ordered MODBUS query and one snapshot."""
+        if getattr(self._local, 'snapshot', None) is None:
+            with self.snapshot():
+                return self.convoyage_details(reference, path)
+        parsed = [(row, parse_modbus_line(row['text'])) for row in self.modbus_rows(reference, path)]
+        return self._convoyage_summary(reference, parsed), self._convoyage_steps(reference, parsed)
+
+    @staticmethod
+    def _convoyage_steps(reference, parsed):
         found, result = set(), []
-        for row in self.modbus_rows(reference, path):
-            values = parse_modbus_line(row['text'])
+        for row, values in parsed:
             for col, name in CHECKPOINTS.items():
                 key = (row['path'], col)
                 if key not in found and col < len(values) and values[col] in (reference, '-' + reference):
@@ -972,10 +1055,10 @@ class TraceStore:
                                    'file': trace_label(row['path'])})
         return result
 
-    def convoyage_summary(self, reference, path=None):
+    @staticmethod
+    def _convoyage_summary(reference, parsed):
         results, positives = OrderedDict(), {}
-        for row in self.modbus_rows(reference, path):
-            values = parse_modbus_line(row['text'])
+        for row, values in parsed:
             positive = next((col for col in CHECKPOINTS if col < len(values) and values[col] == reference), None)
             negative = next((col for col in CHECKPOINTS if col < len(values) and values[col] == '-' + reference), None)
             col = positive if positive is not None else negative
@@ -1070,8 +1153,23 @@ class TraceStore:
             WHERE f.path=? AND l.number=?''', (path, number), cancel)
         if not rows or not rows[0]['ref']:
             return dict(status='unavailable', different=False, current=None, pair=None,
-                        message='Occurrence indisponible.', candidates=[])
+                        message='Occurrence indisponible.', candidates=[], revision=revision)
         return compare_tickets(self, rows, revision, cancel)[(path, number)]
+
+    def current_measurement_for_occurrence(self, path, number, cancel=None):
+        """Exact local measurement, independently of historical comparison."""
+        if getattr(self._local, 'snapshot', None) is None:
+            with self.snapshot():
+                return self.current_measurement_for_occurrence(path, number, cancel)
+        self._check_cancel(cancel)
+        revision = self.analysis_revision()
+        rows = self._rows('''SELECT l.*,f.path FROM lines l JOIN files f ON f.id=l.file_id
+            WHERE f.path=? AND l.number=?''', (path, number), cancel)
+        if not rows or not rows[0]['ref']:
+            return dict(status='unavailable', current=None, revision=revision,
+                        message='Occurrence indisponible.')
+        from occurrence_comparison import current_measurement
+        return current_measurement(self, rows[0], revision, cancel)
 
     @staticmethod
     def _neighbor_counts(before_count, after_count):
@@ -1096,7 +1194,7 @@ class TraceStore:
         differences = {(file, ref): self.differs(file, ref) for _, ref, file, _ in previous + following + [(str(target), reference, path, number)]}
         return previous, following, reference, differences, number
 
-    def _collect_adjacent(self, path, target, number, reference, before_count, after_count, revision, cancel=None):
+    def _collect_adjacent(self, path, target, number, reference, before_count, after_count, revision, cancel=None, *, include_previous=False):
         target = str(target)
         if number is None:
             hits = self.search('ModBusId=' + target, True, path=path)
@@ -1129,6 +1227,22 @@ class TraceStore:
         links = self._analysis_cache.get(('next_files', revision))
         if links is None:
             links = self._analysis_cache.put(('next_files', revision), self.next_files())
+        if include_previous and len(previous) < before_count:
+            predecessors = defaultdict(list)
+            for older, newer in links.items():
+                predecessors[newer].append(older)
+            cursor, visited_before = path, {path}
+            while len(previous) < before_count:
+                candidates = predecessors.get(cursor, [])
+                if len(candidates)!=1:
+                    break
+                older = candidates[0]
+                if older in visited_before or robot_scope(older)!=robot_scope(path):
+                    break
+                visited_before.add(older)
+                more = self._ticket_rows(older, revision, cancel)
+                previous.extend(collect(reversed(more), older, before_count-len(previous), {item[0] for item in previous}))
+                cursor = older
         next_path = links.get(path)
         visited = {path}
         while len(following) < after_count and next_path and next_path not in visited:
@@ -1170,7 +1284,7 @@ class TraceStore:
         def column(row, name):
             self._check_cancel(cancel)
             neighbors = self._collect_adjacent(row['path'], row['modbus'], row['number'], row['ref'],
-                                               before_count, after_count, revision, cancel)
+                                               before_count, after_count, revision, cancel, include_previous=True)
             if neighbors is None:
                 return {'robot': name, 'message': 'Occurrence indisponible.', 'anchor': None}
             before, after, _, _ = neighbors
@@ -1251,9 +1365,11 @@ class TraceStore:
                 tickets.extend(col['previous'] + [col['anchor']] + col['following'])
             tickets.extend(col.get('candidates', []))
         flags = compare_tickets(self, tickets, revision, cancel)
+        get_flags = get_diagnostics(self, tickets, revision, cancel)
         for row in tickets:
             row['comparison'] = flags[(row['path'], row['number'])]
             row['different'] = row['comparison']['different']
+            row['get_diagnostic'] = get_flags[(row['path'], row['number'])]
         result.update(revision=revision, before_count=before_count, after_count=after_count)
         return self._analysis_cache.put(cache_key, result, len(tickets) + 1)
 

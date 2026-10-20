@@ -4,9 +4,43 @@ from unittest.mock import Mock
 
 from summary_view import comparison_rows, comparison_mismatch
 from indexed_ui import IndexedAppMixin
+from summary_widgets import reuse_summary_analysis
+from trace_identity import TraceRef
 
 
 class SummaryComparisonTests(unittest.TestCase):
+    def test_reuse_is_limited_to_same_occurrence_revision_and_detail_inputs(self):
+        previous = dict(path='R1/archive.old', row=dict(number=17, ref='ABC'),
+                        locations=[], location_lot=None, _summary_revision=4,
+                        _summary_comparison=dict(revision=4, status='same'))
+        for patch in ({}, {'path':'R2/archive.old'}, {'row':dict(number=18, ref='ABC')},
+                      {'location_lot':'LOT'}, {'locations':[{'number':24}]}):
+            with self.subTest(patch=patch):
+                data = {k:v for k,v in previous.items() if not k.startswith('_')}
+                data.update(patch)
+                reuse_summary_analysis(previous, data, 4)
+                self.assertEqual('_summary_comparison' in data, not patch)
+        data = {k:v for k,v in previous.items() if not k.startswith('_')}
+        reuse_summary_analysis(previous, data, 5)
+        self.assertNotIn('_summary_comparison', data)
+        previous['_summary_comparison'] = dict(revision=3, status='same')
+        reuse_summary_analysis(previous, data, 4)
+        self.assertNotIn('_summary_comparison', data)
+
+    def test_reuse_never_crosses_generation_or_copies_an_error(self):
+        previous = dict(path=TraceRef('R1/archive.old', 'first'), row=dict(number=17),
+                        _summary_revision=4, _summary_comparison=dict(revision=4, status='same'))
+        data = dict(path=TraceRef('R1/archive.old', 'second'), row=dict(number=17))
+        reuse_summary_analysis(previous, data, 4)
+        self.assertNotIn('_summary_comparison', data)
+        data['path'] = TraceRef('R2/archive.old', 'first')
+        reuse_summary_analysis(previous, data, 4)
+        self.assertNotIn('_summary_comparison', data)
+        data['path'] = previous['path']
+        previous['_summary_comparison'] = dict(revision=4, error='interrupted')
+        reuse_summary_analysis(previous, data, 4)
+        self.assertNotIn('_summary_comparison', data)
+
     def test_red_values_follow_two_unit_tolerance(self):
         for delta in (-3, -2, 0, 2, 3):
             with self.subTest(delta=delta):

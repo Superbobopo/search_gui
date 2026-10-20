@@ -70,8 +70,8 @@ def main():
                 app.keyword.delete(0, 'end'); app.keyword.insert(0, '1194'); app.modbus.set(True); app.on_modbus_check()
                 app.perform_search()
                 pump(lambda: bool(getattr(app, '_display_data', None)))
-                assert '<Cr>' not in app.txt.get('1.0', 'end')
-                assert 'GRIPPER GET' in app.txt.get('1.0', 'end')
+                assert '<Cr>' not in rendered_summary_text(app)
+                assert 'GRIPPER GET' in rendered_summary_text(app)
                 app.btn_adjacent.invoke()
                 pump(lambda: app.adj_popup is not None)
                 def titles():
@@ -103,6 +103,8 @@ def main():
                 app.tasks.executor.shutdown(wait=True, cancel_futures=True)
 
 
+from tools.ui_test_support import run_gui_check
+from tools.summary_test_support import rendered_summary_text, click_summary
+
 if __name__ == '__main__':
-    from tools.ui_test_support import run_gui_check
     run_gui_check(main)

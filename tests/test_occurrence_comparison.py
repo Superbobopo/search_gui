@@ -22,6 +22,101 @@ class ExactComparisonTests(unittest.TestCase):
     write = fixture.PairedAdjacentTests.write
     sync = fixture.PairedAdjacentTests.sync
     select = fixture.PairedAdjacentTests.select
+
+    def test_waiting_analysis_lock_is_cancellable(self):
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        from trace_store import Cancelled
+        cache = self.store._analysis_cache
+        stop, waiting = threading.Event(), threading.Event()
+        checks = [0]
+        def check():
+            checks[0] += 1
+            if checks[0]>1:
+                waiting.set()
+            self.store._check_cancel(stop)
+        def work():
+            with cache.work_lock(('test',), check):
+                self.fail('Cancelled waiter acquired the lock')
+        with ThreadPoolExecutor(1) as pool:
+            with cache.work_lock(('test',), lambda: None):
+                future = pool.submit(work)
+                self.assertTrue(waiting.wait(1))
+                stop.set()
+                with self.assertRaises(Cancelled):
+                    future.result(timeout=1)
+        self.assertFalse(cache.running)
+
+    def test_local_measurement_is_shared_and_invalidated_on_publication(self):
+        self.write('R1', trace(measured(2000, '2')))
+        self.sync()
+        path, hits = self.store.search('ModBusId=2', True)[0]
+        number = hits[0][0]
+        local = self.store.current_measurement_for_occurrence(path, number)
+        full = self.store.comparison_for_occurrence(path, number)
+        self.assertEqual(local['current'], full['current'])
+        self.assertEqual(local['revision'], full['revision'])
+        with patch.object(self.store, '_rows', wraps=self.store._rows) as reads:
+            self.store.current_measurement_for_occurrence(path, number)
+            self.assertEqual(reads.call_count, 1)  # Ticket lookup only: association cached.
+        self.write('R1', trace(measured(2000, '2', dims=(90, 20, 50))))
+        self.sync()
+        old_path = path
+        path, hits = next((p, hits) for p, hits in self.store.search('ModBusId=2', True) if not p.historical)
+        updated = self.store.current_measurement_for_occurrence(path, hits[0][0])
+        self.assertNotEqual(updated['revision'], local['revision'])
+        self.assertEqual(json.loads(updated['current']['dims'])['l'], 90)
+        archived = self.store.current_measurement_for_occurrence(old_path, number)
+        self.assertEqual(json.loads(archived['current']['dims'])['l'], 104)
+        self.assertNotEqual(archived['current']['path'], updated['current']['path'])
+
+    def test_local_absent_ambiguous_and_cancelled(self):
+        import threading
+        from trace_store import Cancelled
+        body = measured(2000, '2')
+        body += '14|10:00:00.0 IDPK pour REF: l=1 H=2 L=3\n'
+        self.write('R1', trace(ticket(1000, '1', 'OTHER'), body))
+        self.sync()
+        path, hits = self.store.search('ModBusId=1', True)[0]
+        self.assertEqual(self.store.current_measurement_for_occurrence(path, hits[0][0])['status'], 'missing_measurement')
+        path, hits = self.store.search('ModBusId=2', True)[0]
+        self.assertEqual(self.store.current_measurement_for_occurrence(path, hits[0][0])['status'], 'ambiguous_measurement')
+        stop = threading.Event(); stop.set()
+        with self.assertRaises(Cancelled):
+            self.store.current_measurement_for_occurrence(path, hits[0][0], stop)
+
+    def test_reference_batch_does_not_repeat_uncacheable_file_analysis(self):
+        import occurrence_comparison as analysis
+        self.write('R1', trace(measured(2000, '1', reference='FIRST'),
+                               measured(3000, '2', reference='SECOND')))
+        self.sync()
+        self.store._analysis_cache = AnalysisCache(budget=1)
+        rows = self.store._rows('''SELECT l.*,f.path FROM lines l JOIN files f ON f.id=l.file_id
+            WHERE l.modbus IS NOT NULL''')
+        with patch.object(analysis, 'file_associations', wraps=analysis.file_associations) as files:
+            results = analysis.comparisons(self.store, rows, self.store.analysis_revision())
+        self.assertEqual(files.call_count, 1)
+        self.assertTrue(all(result['current'] is not None for result in results.values()))
+        self.assertLessEqual(self.store._analysis_cache.weight, 1)
+
+    def test_large_files_keep_requested_reference_analysis_small(self):
+        for robot in ('R1', 'R2'):
+            self.write(robot, trace(*(measured(1000+i*2, str(i), reference=f'REF{i:04}') for i in range(5000))))
+        self.sync()
+        original = self.store._rows
+        for ident in ('250', '270'):
+            path, hits = self.store.search('ModBusId='+ident, True)[0]
+            self.store._analysis_cache.clear()
+            transferred = []
+            def counted(*a, **kw):
+                rows = original(*a, **kw)
+                transferred.extend(rows)
+                return rows
+            with patch.object(self.store, '_rows', side_effect=counted):
+                result = self.store.comparison_for_occurrence(path, hits[0][0])
+            self.assertIsNotNone(result['current'])
+            self.assertLess(len(transferred), 200)
+            self.assertLessEqual(self.store._analysis_cache.weight, self.store._analysis_cache.budget)
     def test_identity_history_crosses_robots_and_keeps_older_difference(self):
         self.write('R2', trace(measured(1000, '10', dims=(104, 48, 189))))
         self.write('R1', trace(measured(2000, '858'), measured(4000, '1054')))
@@ -33,6 +128,32 @@ class ExactComparisonTests(unittest.TestCase):
         self.assertEqual(result['basis_label'], 'Mesure antérieure différente')
         self.assertEqual(json.loads(result['pair'][1]['dims'])['L'], 189)
         self.assertIn('R2', str(result['pair'][1]['path']))
+
+    def test_ordinary_history_skips_get_diagnostics_but_visible_neighbors_keep_them(self):
+        import get_diagnostics
+        self.write('R2', trace(measured(1000, '1', dims=(90, 20, 50))))
+        self.write('R1', trace(measured(2000, '2')))
+        self.sync()
+        path, hits = self.store.search('ModBusId=2', True)[0]
+        number = hits[0][0]
+        with patch.object(get_diagnostics, 'diagnostics', side_effect=AssertionError('Unneeded historical GET scan')):
+            local = self.store.current_measurement_for_occurrence(path, number)
+            full = self.store.comparison_for_occurrence(path, number)
+        self.assertEqual(local['current'], full['current'])
+        self.assertTrue(full['different'])
+        with patch.object(get_diagnostics, '_file', wraps=get_diagnostics._file) as visible:
+            neighbors = self.store.paired_adjacent(path, '2', number)
+        self.assertEqual(visible.call_count, 2)
+        self.assertTrue(all(col['anchor']['get_diagnostic']['status']=='unknown' for col in neighbors['columns']))
+
+    def test_unmeasured_unowned_get_does_not_trigger_retry_diagnostic(self):
+        self.write('R1', trace(measured(1000, '1')+
+                   'G 14|12:00:00.0 GRIPPER GET 1x boîte(s): Code:REF $0101\n'))
+        self.sync()
+        path, hits = self.store.search('ModBusId=1', True)[0]
+        with patch('get_diagnostics.diagnostics', side_effect=AssertionError('No orphan measurement')):
+            result = self.store.comparison_for_occurrence(path, hits[0][0])
+        self.assertIsNotNone(result['current'])
 
     def test_other_sn_lot_sources_and_future_are_excluded(self):
         self.write('R2', trace(measured(1000, '1', sn='OTHER', dims=(1, 1, 1)),

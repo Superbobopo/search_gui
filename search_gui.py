@@ -5,7 +5,7 @@ from tkinter import ttk
 import customtkinter as ctk
 import re
 import datetime
-from tkinter import messagebox, scrolledtext
+from tkinter import messagebox
 
 from style_config import configure_style
 from ui_theme import LIGHT, DARK, palette_for, NavigationButton, navigation_icon, apply_widget_theme
@@ -174,7 +174,6 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             hover_color=(LIGHT['hover'], DARK['hover']),
             text_color=(LIGHT['accent_text'], DARK['accent_text']))
         self.theme_mode = tk.StringVar(value="Système")
-        self.result_mode = tk.StringVar(value="Synthèse")
         self.search_mode = tk.StringVar(value="id")
         self._palette = palette_for(ctk.get_appearance_mode())
         self._appearance = ctk.get_appearance_mode()
@@ -208,7 +207,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
                                                command=self.show_tracking_robot_panel, **nav_options)
         self.btn_convoyage_menu = NavigationButton(self.sidebar, text="         Convoyage",
                                                command=self.show_convoyage_tools, **nav_options)
-        for button in (self.btn_search_menu, self.btn_tracking_robot, self.btn_convoyage_menu):
+        for button in (self.btn_search_menu, self.btn_convoyage_menu, self.btn_tracking_robot):
             button.pack(fill="x", padx=10, pady=3)
         self._nav_icons = {name: navigation_icon(button, name) for name, button in
                            (('search', self.btn_search_menu), ('tracking', self.btn_tracking_robot),
@@ -231,7 +230,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         self.keyword_label = ctk.CTkLabel(self.search_bar, text="Recherche", font=("Segoe UI", 11))
         self.keyword_label.grid(row=0, column=0, padx=(12, 8), pady=12)
         self.keyword = ctk.CTkEntry(self.search_bar, font=ui_font(), corner_radius=6,
-                                   width=120, height=34, placeholder_text="ID, référence ou texte")
+                                   width=120, height=34, placeholder_text="ID ou référence")
         self.keyword.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=12)
         self.tracking_keyword = self.keyword
         self.modbus = tk.BooleanVar(value=True)
@@ -239,7 +238,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         self.mode_frame = ctk.CTkFrame(self.search_bar, fg_color="transparent")
         self.mode_frame.grid(row=0, column=2, padx=(0, 6))
         self.mode_radios = {}
-        for column, (value, label) in enumerate((('id', 'ModBusId'), ('ref', 'Référence'), ('text', 'Texte'))):
+        for column, (value, label) in enumerate((('id', 'ModBusId'), ('ref', 'Référence'))):
             radio = ctk.CTkRadioButton(self.mode_frame, text=label, variable=self.search_mode, value=value,
                                         command=self._choose_search_mode, font=ui_font(),
                                         radiobutton_width=16, radiobutton_height=16,
@@ -275,12 +274,10 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
                                              command=self.compare_previous_idpk_popup, **secondary)
         self.btn_adjacent = ActionButton(self.action_bar, text="IDs adjacents", width=108,
                                          command=self.open_adjacent_for_current_occurrence, **secondary)
-        self.btn_open_trace = ActionButton(self.action_bar, text="Ouvrir trace", width=96,
-                                           command=self.open_file_view, **secondary)
         self.btn_erreurs = ActionButton(self.action_bar, text="Erreurs Robot", width=108,
                                         command=self.check_errors, state='disabled', **secondary)
         for button in (self.btn_up, self.btn_down, self.btn_compare_idpk, self.btn_adjacent,
-                       self.btn_open_trace, self.btn_erreurs):
+                       self.btn_erreurs):
             button.pack(side="left", padx=(0, 5))
         ToolTip(self.btn_erreurs, "Vérifie les prises du robot après l’arrivée sur T5.\nDisponible après l’indexation complète.")
         self.advanced_frame = ctk.CTkFrame(self.workspace, fg_color=(LIGHT['surface'], DARK['surface']))
@@ -454,8 +451,8 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             elif name == 'tracking' and (getattr(self, '_tracking_needs_refresh', False)
                     or getattr(self, '_tracking_revision', 0) != getattr(self, '_index_content_revision', 0)):
                 self._tracking_needs_refresh = False
-                if self.keyword.get().strip():
-                    self.perform_tracking_search()
+                if any(getattr(self, '_tracking_criteria', ())):
+                    self._indexed_tracking(refresh=True)
             elif name == 'convoyage':
                 self.convoyage_workspace.observe_index()
         return panel, created
@@ -482,13 +479,17 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             side='left', before=self.btn_up, padx=(0, 6))
         for button, normal, small in ((self.btn_compare_idpk, 'Comparer IDPK', 'IDPK'),
                                       (self.btn_adjacent, 'IDs adjacents', 'Voisins'),
-                                      (self.btn_open_trace, 'Ouvrir trace', 'Trace'),
                                       (self.btn_erreurs, 'Erreurs Robot', 'Erreurs Robot')):
-            button.configure(text=small if compact else normal, width=82 if compact else
-                             96 if button is self.btn_open_trace else 108)
+            button.configure(text=small if compact else normal, width=82 if compact else 108)
 
     def _activate_panel(self, name):
         old = self._active_panel
+        if old == 'search' and old != name:
+            forms = getattr(self, '_filter_forms', {})
+            forms[old] = (getattr(self, 'advanced_open', False),
+                          self.sn_entry.get() if hasattr(self, 'sn_entry') else '',
+                          self.codelot_entry.get() if hasattr(self, 'codelot_entry') else '')
+            self._filter_forms = forms
         if old and old != name:
             self._view_queries[old] = self.keyword.get()
         if old != name:
@@ -496,14 +497,14 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             self.keyword.insert(0, self._view_queries.get(name, ''))
         self._active_panel = name
         self._set_active_navigation()
-        if name == 'convoyage':
+        if name in ('convoyage', 'tracking'):
             self.search_bar.pack_forget()
         else:
             self.search_bar.pack(side='top', fill='x', padx=12, pady=(12, 8),
                                  before=getattr(self, 'index_status_label', self.main_panel))
         self.keyword_label.configure(text={'search': 'Recherche', 'tracking': 'Référence',
                                            'convoyage': 'ModBusId'}[name])
-        self.keyword.configure(placeholder_text='ID, référence ou texte' if name == 'search' else
+        self.keyword.configure(placeholder_text='ID ou référence' if name == 'search' else
                                'Référence produit' if name == 'tracking' else 'Identifiant ModBus')
         if name == 'search':
             self.mode_frame.grid()
@@ -515,6 +516,19 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             self.action_bar.grid_remove()
             self.advanced_frame.pack_forget()
             self.advanced_open = False
+        if name == 'search':
+            self.btn_gear.grid()
+            if old != name:
+                opened, sn, lot = getattr(self, '_filter_forms', {}).get(name, (False, '', ''))
+                self.advanced_frame.pack_forget()
+                self.advanced_open = False
+                if opened or hasattr(self, 'sn_entry'):
+                    self.toggle_advanced_search()
+                    for entry, value in ((self.sn_entry, sn), (self.codelot_entry, lot)):
+                        entry.delete(0, 'end')
+                        entry.insert(0, value)
+                    if not opened:
+                        self.toggle_advanced_search()
         self.keyword.unbind('<Return>')
         self.keyword.bind('<Return>', lambda event: self._submit_visible_search())
 
@@ -544,6 +558,8 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         if self._active_panel == 'convoyage':
             self.convoyage_workspace.show_tab('parcours')
             self.convoyage_workspace.entry.focus_set()
+        elif self._active_panel == 'tracking':
+            self.tracking_view.reference_entry.focus_set()
         else:
             self.keyword.focus_set()
         return 'break'
@@ -568,32 +584,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         label.configure(text='Fichier : ' + (self._compact_trace_label(path) if path else 'Aucun'))
         self.source_label.configure(text=trace_label(path).split(' / ', 1)[0] if path else 'Aucune source')
         self.occurrence_label.configure(text=occurrence)
-        self.btn_copy_path.configure(state='normal' if path else 'disabled')
         self._path_tooltip.text = trace_tooltip(path) if path else ''
-
-    def _copy_context_path(self):
-        if self._context_path:
-            self.clipboard_clear()
-            self.clipboard_append(os.fspath(self._context_path))
-
-    def _sync_result_visibility(self):
-        classic = getattr(self, 'classic_frame', None)
-        summary = getattr(self, 'summary_frame', None)
-        if classic is None or not classic.winfo_exists() or summary is None or not summary.winfo_exists():
-            return
-        for value, button in self.result_switch._buttons_dict.items():
-            button.configure(text_color=(LIGHT['accent_text'], DARK['accent_text'])
-                             if value == self.result_mode.get() else (LIGHT['text'], DARK['text']))
-        if getattr(self, '_result_stack', None) != (classic, summary):
-            classic.pack_forget()
-            summary.pack_forget()
-            classic.place(x=0, y=0, relwidth=1, relheight=1)
-            summary.place(x=0, y=0, relwidth=1, relheight=1)
-            self._result_stack = (classic, summary)
-        if self.result_mode.get() == 'Synthèse':
-            summary._parent_frame.lift()
-        else:
-            classic.lift()
 
     def toggle_advanced_search(self):
         """
@@ -634,8 +625,8 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             self.codelot_entry.pack(side="left", padx=(0, 0), pady=6)
 
             # Bind <Return> sur les deux
-            self.sn_entry.bind('<Return>', self.on_advanced_search)
-            self.codelot_entry.bind('<Return>', self.on_advanced_search)
+            self.sn_entry.bind('<Return>', lambda event: self._submit_visible_search())
+            self.codelot_entry.bind('<Return>', lambda event: self._submit_visible_search())
 
             self.advanced_open = True
             self._theme_window(self.advanced_frame)
@@ -673,40 +664,14 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         self._path_tooltip = ToolTip(self.file_label, '')
         self.btn_next_file = ActionButton(header, text='›', width=32, command=self.on_right)
         self.btn_next_file.grid(row=0, column=3)
-        self.btn_copy_path = ActionButton(header, text='Copier chemin', width=94, height=28,
-                                          command=self._copy_context_path, state='disabled',
-                                          fg_color=(LIGHT['raised'], DARK['raised']),
-                                          hover_color=(LIGHT['border'], DARK['border']),
-                                          text_color=(LIGHT['text'], DARK['text']), font=('Segoe UI', 10))
-        self.btn_copy_path.grid(row=0, column=4, padx=(8, 0))
         self.occurrence_label = ctk.CTkLabel(header, text='', font=('Segoe UI', 10),
                                             text_color=(LIGHT['muted'], DARK['muted']))
         self.occurrence_label.grid(row=1, column=0, columnspan=3, sticky='w')
-        self.result_switch = ctk.CTkSegmentedButton(header, values=['Classique', 'Synthèse'],
-                                                    variable=self.result_mode,
-                                                    command=self._change_result_mode,
-                                                    font=ui_font(), height=32, corner_radius=6,
-                                                    fg_color=(LIGHT['raised'], DARK['raised']),
-                                                    selected_color=(LIGHT['accent'], DARK['accent']),
-                                                    selected_hover_color=(LIGHT['hover'], DARK['hover']),
-                                                    unselected_color=(LIGHT['raised'], DARK['raised']),
-                                                    unselected_hover_color=(LIGHT['border'], DARK['border']),
-                                                    text_color=(LIGHT['text'], DARK['text']))
-        self.result_switch.grid(row=1, column=3, columnspan=2, sticky='e', pady=(5, 0))
         body = ctk.CTkFrame(panel, fg_color='transparent', corner_radius=0)
         body.pack(fill='both', expand=True)
-        self.classic_frame = tk.Frame(body, bg='#ffffff', bd=1, relief='groove',
-                                      highlightthickness=1, highlightbackground='#cfd8dc')
-        self.classic_frame._preserve_classic_theme = True
-        self.txt = scrolledtext.ScrolledText(self.classic_frame, wrap='word', font=('Consolas', 11),
-                                             bg='#fafbfc', borderwidth=0)
-        self.txt.pack(fill='both', expand=True, padx=8, pady=8)
         self.summary_frame = ctk.CTkScrollableFrame(body, fg_color=(LIGHT['surface'], DARK['surface']),
                                                     corner_radius=6)
-        self.txt.tag_bind('clickable_get', '<Double-1>', self.on_double_click_get)
-        self.txt.tag_bind('clickable_pute', '<Double-1>', self.on_double_click_pute)
-        self.txt.tag_bind('clickable_refprod', '<Button-1>', self.on_click_refprod)
-        self._sync_result_visibility()
+        self.summary_frame.pack(fill='both', expand=True)
         self.btn_erreurs.configure(state='normal' if getattr(self, 'files_loaded', False) else 'disabled')
         self._theme_window(panel)
         panel._panel_palette = tuple(self._palette.items())
@@ -714,94 +679,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             self._render_summary(None)
 
     def focus_on_ticket_and_get(self, filename, modbus_id, refprod):
-        if getattr(self, 'store', None) is not None:
-            return self._focus_indexed_ticket(filename, modbus_id, refprod)
-        import re, os, datetime, tkinter as tk
-        # Charge le contenu du fichier
-        content = BUFFER.get(filename, "")
-        lines = content.splitlines()
-
-        # Styles (une seule fois suffit, mais on remet ici pour être safe)
-        self.txt.tag_configure("date", font=("Segoe UI", 10), foreground="#909090", justify="center")
-        self.txt.tag_configure("occ", font=("Segoe UI", 9), foreground="#adb5bd", justify="center")
-        self.txt.tag_configure("divider", foreground="#c7c7c7", font=("Segoe UI", 9))
-        self.txt.tag_configure("brute", font=("Consolas", 9), background="#f5f7fa", foreground="#1e293b", lmargin1=7,
-                               lmargin2=7)
-        self.txt.tag_configure("refcard", font=("Segoe UI", 10, "bold"), foreground="#00876c", background="#e9fdf4",
-                               lmargin1=6, lmargin2=6, spacing1=6, spacing3=6, justify="center")
-        self.txt.tag_configure("none", font=("Segoe UI", 9, "bold", "italic"), foreground="#b71c1c", justify="center",
-                               spacing1=8, spacing3=8)
-        self.txt.tag_configure("clickable_refprod", foreground="#00876c", underline=1, font=("Segoe UI", 10, "bold"))
-        self.txt.tag_configure("getcard", font=("Segoe UI", 10, "bold"), foreground="#00589b", background="#e3f2fd",
-                               lmargin1=10, lmargin2=10)
-
-        # 1) Trouver la ligne ticket (RefProduit=refprod et ModBusId=modbus_id)
-        ticket_idx = None
-        for idx, line in enumerate(lines):
-            if field_matches(line, "RefProduit", refprod) and field_matches(line, "ModBusId", modbus_id):
-                ticket_idx = idx
-                break
-        if ticket_idx is None:
-            self.txt.config(state='normal')
-            self.txt.delete("1.0", tk.END)
-            self.txt.insert(tk.END, "Ticket introuvable dans ce fichier.\n")
-            self.txt.config(state='disabled')
-            return
-
-        # Affichage principal (comme dans display_line)
-        self.txt.config(state='normal')
-        self.txt.delete(1.0, tk.END)
-
-        # Date fichier
-        file_date = trace_line_datetime(filename, lines[ticket_idx])
-        self.txt.insert(tk.END, f"{file_date.strftime('%d/%m/%Y')}\n", "date")
-        self.txt.insert(tk.END, f"Occurrence 1/1\n", "occ")
-        self.txt.insert(tk.END, "─" * 56 + "\n", "divider")
-
-        # Infos du ticket
-        line = lines[ticket_idx]
-        self.lines = [line]
-        self.line_index = 0
-
-        # Extraction des champs
-        extract_fields_brut = format_ticket_fields
-
-        brut_text, line_fields = extract_fields_brut(line)
-        self.txt.insert(tk.END, brut_text + "\n", "brute")
-        self.txt.insert(tk.END, "─" * 56 + "\n", "divider")
-
-        # Bloc RefProduit cliquable
-        if line_fields["refprod"]:
-            start_r = self.txt.index(tk.END)
-            self.txt.insert(tk.END, f"RefProduit trouvé : {line_fields['refprod']}\n", ("refcard", "clickable_refprod"))
-            end_r = self.txt.index(tk.END)
-            self.txt.tag_add("clickable_refprod", start_r, end_r)
-            self.txt.insert(tk.END, "─" * 56 + "\n", "divider")
-
-        # 3) Chercher le GRIPPER GET après le ticket pour cette ref
-        get_line = None
-        for l in lines[ticket_idx + 1:]:
-            if is_gripper(l, "GET", refprod, loading_only=True):
-                get_line = l
-                break
-
-        if get_line:
-            s1 = self.txt.index(tk.END)
-            self.txt.insert(tk.END, f"GRIPPER GET :\n{get_line}\n", ("getcard", "clickable_get"))
-            e1 = self.txt.index(tk.END)
-            self.txt.tag_add("clickable_get", s1, e1)
-            self.txt.insert(tk.END, "─" * 56 + "\n", "divider")
-        else:
-            # Message d'erreur, rouge, centré, espacé
-            self.txt.insert(tk.END, "\n", "none")
-            self.txt.insert(tk.END, f"Aucun Gripper GET trouvé pour {refprod}\n", "none")
-
-        self.file_label.config(text=f"Fichier : {trace_label(filename)}")
-        self.txt.config(state='disabled')
-
-        # Bind pour clics (si besoin)
-        self.txt.tag_bind("clickable_get", "<Double-1>", self.on_double_click_get)
-        self.txt.tag_bind("clickable_refprod", "<Button-1>", self.on_click_refprod)
+        return self._focus_indexed_ticket(filename, modbus_id, refprod)
 
     def _on_error_line_click(self, filename, modbus_id, refprod, number=None):
         if getattr(self, 'store', None) is not None:
@@ -958,25 +836,6 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
                 return i, l
         return None, None
 
-
-    def get_separator(self):
-        # Largeur actuelle de la zone de texte (en caractères)
-        # On prend la largeur du widget (en pixels) divisé par la taille moyenne d’un caractère (8-9 px pour Courier 12)
-        width_px = self.txt.winfo_width()
-        if width_px < 400:  # Valeur par défaut au lancement
-            width_px = 700
-        char_count = int(width_px / 8.5)
-        return "-" * max(25, char_count - 2)
-
-
-
-
-
-
-
-
-
-    # Dans la classe SearchApp
 
     def on_double_click_get(self, event):
         """
@@ -1414,6 +1273,7 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         from tracking_view import TrackingView
         self.tracking_view = TrackingView(panel, self)
         self.tracking_view.pack(fill='both', expand=True)
+        self.tracking_keyword = self.tracking_view.reference_entry
         self._theme_window(panel)
         panel._panel_palette = tuple(self._palette.items())
 

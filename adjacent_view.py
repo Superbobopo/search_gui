@@ -27,8 +27,31 @@ def gap_text(seconds):
     return ' '.join(parts) + (' après' if seconds > 0 else ' avant')
 
 
+def listing_text(data, directories):
+    """Plain text export of the published result, never a second lookup."""
+    blocks = []
+    columns = data.get('columns', [])
+    for col in sorted(columns, key=lambda c: {'R1': 0, 'R2': 1}.get(c['robot'], 2)):
+        anchor = col.get('anchor')
+        lines = [col['robot']]
+        if not anchor:
+            lines.append(col.get('message') or ('Rapprochement ambigu : choisir une génération.'
+                         if col.get('candidates') else 'Aucun rapprochement disponible.'))
+        else:
+            when = anchor.get('time')
+            lines.append(datetime.fromtimestamp(when).strftime('%d/%m/%Y') if when is not None else 'Date inconnue')
+            for row in [*col.get('previous', []), anchor, *col.get('following', [])]:
+                central = row['path']==anchor['path'] and row['number']==anchor['number']
+                hour = timestamp_parts(row['text'])[1] or '—'
+                values = [str(row.get(key) or '—') for key in ('modbus', 'ref', 'sn', 'lot')]
+                lines.append(('🟢 ➜ ' if central else '') + hour + ' | ' + ' | '.join(
+                    f'{name} : {value}' for name, value in zip(('ID', 'Réf', 'SN', 'Lot'), values)))
+        blocks.append('\n'.join(lines))
+    return '\n\n'.join(blocks)
+
+
 class AdjacentView(ttk.Frame):
-    fields = ('hour', 'id', 'ref', 'sn', 'lot')
+    fields = ('hour', 'id', 'ref', 'sn', 'lot', 'state')
 
     def __init__(self, parent, app):
         super().__init__(parent, padding=(20, 16))
@@ -52,18 +75,12 @@ class AdjacentView(ttk.Frame):
         make_selectable(self.heading)
         controls = ttk.Frame(self, style='Popup.TFrame', padding=(14, 10))
         controls.grid(row=1, column=0, sticky='ew', pady=(0, 10))
-        self._preset_controls = ttk.Frame(controls, style='Popup.TFrame')
-        self._preset_controls.grid(row=0, column=0, sticky='w')
+        self._heading_controls = ttk.Frame(controls, style='Popup.TFrame')
+        self._heading_controls.grid(row=0, column=0, sticky='w')
         self._count_controls = ttk.Frame(controls, style='Popup.TFrame')
         self._count_controls.grid(row=0, column=1, sticky='w', padx=(22, 0))
-        ttk.Label(self._preset_controls, text='Voisinage', style='Popup.TLabel',
+        ttk.Label(self._heading_controls, text='Voisinage', style='Popup.TLabel',
                   font=('Segoe UI', 10, 'bold')).grid(row=0, column=0, padx=(0, 16))
-        self.presets = {}
-        for i, counts in enumerate(((5, 5), (5, 10), (5, 30))):
-            button = ActionButton(self._preset_controls, text=f'{counts[0]} / {counts[1]}', width=70, style='Popup.TButton',
-                                command=lambda value=counts: self._preset(value))
-            button.grid(row=0, column=i+1, padx=(0, 4))
-            self.presets[counts] = button
         value = getattr(app, '_adjacent_counts', (5, 5))
         self.before_var, self.after_var = tk.StringVar(value=str(value[0])), tk.StringVar(value=str(value[1]))
         ttk.Label(self._count_controls, text='Avant', style='Popup.TLabel').grid(row=0, column=0, padx=(0, 6))
@@ -74,6 +91,13 @@ class AdjacentView(ttk.Frame):
         self.after_entry.grid(row=0, column=3)
         self.apply_button = ActionButton(self._count_controls, text='Appliquer', style='Popup.TButton', command=self.apply_counts)
         self.apply_button.grid(row=0, column=4, padx=(14, 0))
+        self.copy_button = ActionButton(self._count_controls, text='⧉', width=32, role='quiet',
+                                        command=self.copy_lists, state='disabled')
+        self.copy_button.grid(row=0, column=5, padx=(6, 0))
+        self.copy_button.bind('<Enter>', self._show_copy_tip, add='+')
+        self.copy_button.bind('<Leave>', self._hide_copy_tip, add='+')
+        self._copy_tip = None
+        self._copy_ready = False
         self.validation = tk.Label(controls, text='', anchor='w', font=('Segoe UI', 9))
         self.validation.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(6, 0))
         self.validation.grid_remove()
@@ -100,6 +124,9 @@ class AdjacentView(ttk.Frame):
         self.detail = tk.Label(self.detail_card, text='', height=2, anchor='nw', justify='left', font=('Segoe UI', 10))
         self.detail.grid(row=0, column=0, sticky='ew')
         make_selectable(self.detail)
+        self.get_detail = tk.Label(self.detail_card, text='', anchor='w', justify='left', font=('Segoe UI', 10, 'bold'))
+        self.get_detail.grid(row=1, column=0, sticky='ew', pady=(4, 0))
+        make_selectable(self.get_detail)
         self.close_button = ActionButton(self, text='Fermer', style='Popup.TButton')
         self.close_button.grid(row=6, column=0, sticky='e', pady=(12, 0))
         for index in range(2):
@@ -132,8 +159,8 @@ class AdjacentView(ttk.Frame):
             label.selection_text.bind('<MouseWheel>', self._wheel)
         tree = PopupTreeview(frame, columns=self.fields, show='headings', height=11,
                                  selectmode='none', style='Adjacent.Treeview')
-        for field, caption, width in zip(self.fields, ('Heure', 'ID', 'Référence', 'SN', 'CodeLot'),
-                                        (90, 50, 125, 80, 110)):
+        for field, caption, width in zip(self.fields, ('Heure', 'ID', 'Référence', 'SN', 'CodeLot', 'État'),
+                                        (80, 45, 110, 75, 95, 120)):
             tree.heading(field, text=caption)
             tree.column(field, width=width, minwidth=width-10, anchor='center')
         tree.grid(row=1, column=0, sticky='nsew')
@@ -171,16 +198,11 @@ class AdjacentView(ttk.Frame):
             if width != self._wrap_width:
                 self._wrap_width = width
                 self.heading.configure(wraplength=max(150, width-200))
-                for label in (self.note, self.detail):
+                for label in (self.note, self.detail, self.get_detail):
                     label.configure(wraplength=width)
                 narrow = event.width < 860
                 self._count_controls.grid_configure(row=1 if narrow else 0, column=0 if narrow else 1,
                                                      padx=0 if narrow else (22, 0), pady=(8, 0) if narrow else 0)
-
-    def _preset(self, counts):
-        self.before_var.set(str(counts[0]))
-        self.after_var.set(str(counts[1]))
-        self.apply_counts()
 
     def apply_counts(self):
         try:
@@ -215,10 +237,36 @@ class AdjacentView(ttk.Frame):
         self._yview('scroll', -int(event.delta/120), 'units')
         return 'break'
 
+    def _show_copy_tip(self, event=None):
+        self._hide_copy_tip()
+        self._copy_tip = tk.Toplevel(self)
+        self._copy_tip.wm_overrideredirect(True)
+        self._copy_tip.wm_geometry(f'+{self.copy_button.winfo_rootx()}+{self.copy_button.winfo_rooty()+36}')
+        ttk.Label(self._copy_tip, text='Copier les listes R1 et R2', padding=6).pack()
+
+    def _hide_copy_tip(self, event=None):
+        if self._copy_tip is not None:
+            self._copy_tip.destroy()
+            self._copy_tip = None
+
+    def copy_lists(self):
+        if not self._copy_ready or not self.data:
+            return
+        text = listing_text(self.data, self.app._selected_directories)
+        if text:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.note.configure(text='Listes R1 et R2 copiées')
+        self._hide_copy_tip()
+
     def loading(self, message='Actualisation des voisins…'):
+        self._copy_ready = False
+        self.copy_button.configure(state='disabled')
         self.note.configure(text=message)
 
     def status(self, message):
+        self._copy_ready = False
+        self.copy_button.configure(state='disabled')
         self.data = None
         self.rows.clear()
         self._cell = self._hover_key = None
@@ -227,6 +275,8 @@ class AdjacentView(ttk.Frame):
         self.note.configure(text='')
         self.detail.configure(text='')
         self.detail.sync_selection_text()
+        self.get_detail.configure(text='')
+        self.get_detail.sync_selection_text()
         self._updating = True
         for panel in self.panels:
             tree = panel['tree']
@@ -240,6 +290,8 @@ class AdjacentView(ttk.Frame):
         self._updating = False
 
     def show(self, data):
+        self._copy_ready = any(col.get('anchor') for col in data['columns'])
+        self.copy_button.configure(state='normal' if self._copy_ready else 'disabled')
         previous = self.data
         self.data = data
         self._cell = self._hover_key = None
@@ -250,7 +302,7 @@ class AdjacentView(ttk.Frame):
         when = datetime.fromtimestamp(data['time']).strftime('%d/%m/%Y %H:%M:%S.%f').rstrip('0').rstrip('.') if data['time'] is not None else 'horaire inexploitable'
         self.heading.configure(text=f'Repère : {when} · {name} · ID {selected["modbus"]}')
         self.heading.sync_selection_text()
-        self.note.configure(text='Voisinages indépendants · rouge : écart IDPK > 2 pour les mêmes Référence / SN / CodeLot.'
+        self.note.configure(text='Rouge : écart IDPK > 2 · Orange : échec GET confirmé · Voisinages indépendants.'
                             + (' · Vérification en cours : alertes provisoires.' if not self.app._sources_verified else ''))
         columns = data['columns']
         verified = self.app._sources_verified and self.app._indexed_complete
@@ -296,11 +348,18 @@ class AdjacentView(ttk.Frame):
                 for i, row in enumerate(entries):
                     key = str(i)
                     keep.add(key)
-                    values = ((timestamp_parts(row['text'])[1] or '—', row['modbus'], row['ref'], row['sn'] or '—', row['lot'] or '—')
-                              if row else ('', '', '', '', ''))
+                    diagnostic = row.get('get_diagnostic', {}) if row else {}
+                    get_failed = verified and diagnostic.get('failed')
+                    different = verified and row and row.get('different')
+                    caption = {'failed': 'Échec GET', 'recovered': 'Échec GET',
+                               'success': 'GET réussi', 'unknown': 'GET inconnu', 'missing': 'GET absent'}
+                    state = (('IDPK + échec GET' if different and get_failed else caption.get(diagnostic.get('status'), 'GET inconnu'))
+                             if verified else 'Vérification en cours')
+                    values = ((timestamp_parts(row['text'])[1] or '—', row['modbus'], row['ref'], row['sn'] or '—', row['lot'] or '—', state)
+                              if row else ('', '', '', '', '', ''))
                     central = row is not None and anchor is not None and row['path']==anchor['path'] and row['number']==anchor['number']
                     background = ('current' if robot==name else 'nearest') if central else ('even' if i%2==0 else 'odd')
-                    tag = background + ('_different' if verified and row and row.get('different') else '')
+                    tag = background + ('_different' if different else '_get_failed' if get_failed else '')
                     if tree.exists(key):
                         if tuple(tree.item(key, 'values')) != tuple(values) or tree.item(key, 'tags') != (tag,):
                             tree.item(key, values=values, tags=(tag,))
@@ -335,12 +394,11 @@ class AdjacentView(ttk.Frame):
         self.heading.configure(background=colors['bg'], foreground=colors['muted'])
         self.heading.sync_selection_text()
         self.note.configure(foreground=colors['muted'])
+        self.get_detail.configure(background=colors['surface'], foreground=colors['warning_text'])
+        self.get_detail.sync_selection_text()
         for label in (self.detail, self.validation):
             label.configure(background=colors['surface'], foreground=colors['error_text'] if label is self.validation else colors['text'])
         self.detail.sync_selection_text()
-        counts = getattr(self.app, '_adjacent_counts', (5, 5))
-        for preset, button in self.presets.items():
-            button.configure(style='Popup.Active.TButton' if preset==counts else 'Popup.TButton')
         for panel in self.panels:
             panel['title'].configure(foreground=colors['accent'])
             for label, role in ((panel['status'], 'warning_text' if panel['warning'] else 'muted'), (panel['source'], 'text')):
@@ -350,6 +408,7 @@ class AdjacentView(ttk.Frame):
                 for different in (False, True):
                     panel['tree'].tag_configure(tag + ('_different' if different else ''), background=colors[background],
                                                 foreground=colors['error_text'] if different else colors['text'])
+                panel['tree'].tag_configure(tag+'_get_failed', background=colors[background], foreground=colors['warning_text'])
 
     def _detail(self, row):
         result = row.get('comparison', {})
@@ -366,6 +425,9 @@ class AdjacentView(ttk.Frame):
             message = 'Comparaison disponible après vérification des sources.'
         self.detail.configure(text=f'ID {row["modbus"]} · {row["ref"]} · SN {row["sn"] or "—"} · Lot {row["lot"] or "—"}\n' + message)
         self.detail.sync_selection_text()
+        verified = self.app._sources_verified and self.app._indexed_complete
+        self.get_detail.configure(text=row.get('get_diagnostic', {}).get('message', 'Résultat GET inconnu') if verified else '')
+        self.get_detail.sync_selection_text()
 
     def _hover(self, robot, event):
         if not self.data or robot not in self.trees:

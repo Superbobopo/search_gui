@@ -53,7 +53,7 @@ def main():
         local, desktop = base/'traces', base/'Desktop'
         files = []
         for root, robot in ((local, 'R1'), (local, 'R2'), (desktop/'traces', 'R1')):
-            path = root/robot/'TracMODBUS.txt'
+            path = (root/'R1'/'copies' if robot=='R2' else root/robot)/'TracMODBUS.txt'
             path.parent.mkdir(parents=True)
             path.write_text(records(robot), encoding='utf8')
             files.append(str(path))
@@ -107,6 +107,12 @@ def main():
 
         def snapshot(name):
             pump()
+            for row in view._step_rows:
+                if row.winfo_ismapped():
+                    assert row.checkpoint.cget('anchor')=='center'
+                    assert abs(row.checkpoint.winfo_x()+row.checkpoint.winfo_width()/2-row.winfo_width()/2)<3
+                    if row.arrow.winfo_ismapped():
+                        assert abs(row.arrow.winfo_x()+row.arrow.winfo_width()/2-row.winfo_width()/2)<3
             image = widget_image(view)
             assert color_pixels(image, app._palette['text'])>50
             if app._appearance=='Dark':
@@ -135,20 +141,18 @@ def main():
             inside()
             initial = app.selection
             detail_widgets = (str(view.positive), str(view.waiting), str(view.steps_frame))
-            with patch.object(app.store, 'convoyage_summary', wraps=app.store.convoyage_summary) as summary, \
-                 patch.object(app.store, 'convoyage_steps', wraps=app.store.convoyage_steps) as steps:
+            with patch.object(app.store, 'convoyage_details', wraps=app.store.convoyage_details) as summary:
                 for path in files:
                     click(path, 1000)
                     assert view.data[0][0]['_filepath']==path
                     assert all(call.args[1]==path for call in summary.call_args_list[-1:])
-                    assert all(call.args[1]==path for call in steps.call_args_list[-1:])
                     assert len(view.data[1])==6
                     assert ('T5 / R2' if path==files[1] else 'T5 / R1') in view.waiting.value.cget('text')
                     assert len(windows())==1 and not getattr(app, 'convoyage_window', None)
                 assert 'Bureau' in card_at(view.selected_index).source.cget('text')
-                before = summary.call_count, steps.call_count
+                before = summary.call_count
                 click(files[2], 1000)
-                assert (summary.call_count, steps.call_count)==before
+                assert summary.call_count==before
             assert app.selection is initial
             assert detail_widgets==(str(view.positive), str(view.waiting), str(view.steps_frame))
             color(view.positive, 'positive'); color(view.waiting, 'error')
@@ -171,7 +175,7 @@ def main():
                 target.title._label.event_generate('<Button-3>', x=12, y=10)
                 view.menu.invoke(0); assert copied[-1]==view.errors[view.selected_index][1]
                 view.menu.invoke(2); assert copied[-1]==view.errors[view.selected_index][0]
-                view.path_button.invoke(); assert copied[-1]==view.errors[view.selected_index][0]
+                view.copy('path'); assert copied[-1]==view.errors[view.selected_index][0]
                 view.cards.canvas.focus_force(); view.cards.canvas.event_generate('<Control-c>')
                 assert '\t' in copied[-1]
             value = view.waiting.value.selection_text
@@ -191,7 +195,7 @@ def main():
             # A canceled response cannot replace a newer robot, even after panel navigation.
             started, finished, release = threading.Event(), threading.Event(), threading.Event()
             releases.append(release)
-            original = app.store.convoyage_summary
+            original = app.store.convoyage_details
             def slow(ident, path=None):
                 if ident=='1002' and path==files[0]:
                     started.set(); release.wait(8)
@@ -199,7 +203,7 @@ def main():
                     return original(ident, path)
                 finally:
                     if ident=='1002' and path==files[0]: finished.set()
-            with patch.object(app.store, 'convoyage_summary', slow):
+            with patch.object(app.store, 'convoyage_details', slow):
                 click(files[0], 1002, wait=False); pump(started.is_set)
                 click(files[1], 1003)
                 app.btn_search_menu.invoke()
@@ -209,13 +213,13 @@ def main():
                 assert view.data[0][0]['_filepath']==files[1]
             # The latest request survives a main-panel change while it is pending.
             started.clear(); finished.clear(); release.clear()
-            with patch.object(app.store, 'convoyage_summary', slow):
+            with patch.object(app.store, 'convoyage_details', slow):
                 click(files[0], 1002, wait=False); pump(started.is_set)
                 app.btn_convoyage_menu.invoke()
                 release.set(); pump(lambda: view.state=='ready')
                 assert view.data[0][0]['_filepath']==files[0]
             # Failure is local, neutral and recoverable through the real button.
-            with patch.object(app.store, 'convoyage_summary', side_effect=OSError('Test indisponible')):
+            with patch.object(app.store, 'convoyage_details', side_effect=OSError('Test indisponible')):
                 click(files[0], 1004, wait=False); pump(lambda: view.state=='error')
             assert 'Test indisponible' in view.message.cget('text') and view.positive.role=='neutral'
             view.retry.invoke(); pump(lambda: view.state=='ready')
@@ -232,6 +236,8 @@ def main():
             assert view.waiting.grid_info()['row']==1
             assert view.positive.winfo_width()>view.states.winfo_width()*.9
             snapshot('convoyage_cards_small_20261019.png')
+            view.detail_scroll._parent_canvas.yview_moveto(.5); pump()
+            snapshot('convoyage_centered_small_20261020.png')
             left = view.cards.canvas.yview()
             view.waiting.value.selection_text.event_generate('<MouseWheel>', delta=-120); pump()
             assert view.detail_scroll._parent_canvas.yview()[0]>0 and view.cards.canvas.yview()==left
@@ -239,7 +245,7 @@ def main():
             assert not view._vertical and view.panes.sash_coord(0)[0]==340
             # Close an actual in-flight query and verify cancellation/cleanup.
             started.clear(); finished.clear(); release.clear()
-            with patch.object(app.store, 'convoyage_summary', slow):
+            with patch.object(app.store, 'convoyage_details', slow):
                 click(files[0], 1002, wait=False); pump(started.is_set)
                 view.close_button.invoke(); pump()
                 assert view._closed and view.tasks.closed
@@ -258,7 +264,7 @@ def main():
             assert len(large.cards.cards)<16
             large.close_button.invoke(); pump()
             assert large.tasks.closed
-            print('OK convoyage cartes : 180 anomalies/3 sources robot, fichier exact des deux requetes, '
+            print('OK convoyage cartes : 180 anomalies/3 sources robot, fichier exact de la requete partagee, '
                   'pas de popup, selection/clavier/copie, widgets conserves, vert/rouge rendus Clair/Sombre, '
                   'responsive 1180/780/560, scrolls independants, etats manquants/registres inconnus, '
                   'reponses depassees/erreur/reprise/fermeture et 10000 lignes virtualisees.')

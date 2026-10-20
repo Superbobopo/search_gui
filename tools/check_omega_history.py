@@ -14,6 +14,7 @@ import search_gui as gui
 import trace_sources as sources
 from trace_parser import read_trace
 from trace_store import TraceStore
+from tools.summary_test_support import rendered_summary_text, click_summary
 from tools.ui_test_support import run_gui_check
 
 
@@ -61,18 +62,7 @@ def main():
             nonlocal stamp
             event = app.selection.details[key]
             before = windows()
-            start = app.txt.tag_ranges('clickable_' + key)[0]
-            position = f'{start} +1lines +5chars'
-            app.txt.see(position)
-            pump()
-            box = app.txt.bbox(position)
-            assert box, (key, position)
-            x, y = box[0] + 2, box[1] + 2
-            assert 'clickable_' + key in app.txt.tag_names(f'@{x},{y}')
-            app.txt.event_generate('<Motion>', x=x, y=y)
-            for count in range(2):
-                app.txt.event_generate('<ButtonPress-1>', x=x, y=y, time=stamp + count * 100)
-                app.txt.event_generate('<ButtonRelease-1>', x=x, y=y, time=stamp + count * 100 + 20)
+            click_summary(app, key, stamp=stamp)
             stamp += 1000
             pump(lambda: bool(windows() - before))
             window = (windows() - before).pop()
@@ -105,24 +95,17 @@ def main():
             tooltip = app._path_tooltip.tipwindow
             assert any(version in str(w.cget('text')) for w in tooltip.winfo_children())
             app.file_label.event_generate('<Leave>')
-            # Exercise the actual copy button without touching the shared Windows clipboard.
-            with patch.object(app, 'clipboard_clear') as clear, patch.object(app, 'clipboard_append') as copy:
-                app.btn_copy_path.invoke()
-                clear.assert_called_once_with()
-                copy.assert_called_once_with(str(path))
+            assert not hasattr(app, 'btn_copy_path')
             assert app.selection.details['locations'], 'Fixture requires a known lot location'
             for event in app.selection.details['locations']:
                 expected = sources.compact_trace_label(event['path'], app._selected_directories)
-                assert expected in app.txt.get('1.0', 'end')
-            app.result_switch._buttons_dict['Synthèse'].invoke()
-            pump(lambda: app.result_mode.get() == 'Synthèse')
+                assert expected in rendered_summary_text(app)
             summary_text = '\n'.join(str(w.cget('text')) for w in descendants(app.summary_frame)
                                      if isinstance(w, gui.ctk.CTkLabel))
             assert 'Derniers emplacements' in summary_text and expected in summary_text
             assert 'OMEGA conservée' not in summary_text
             assert all(getattr(w, '_selectable_display', False) for w in descendants(app.summary_frame)
                        if isinstance(w, gui.tk.Text))
-            app.result_switch._buttons_dict['Classique'].invoke()
             # Same pathname, different month and dimensions. The old selection
             # must still open its own snapshot even before the next refresh.
             path.write_bytes(original.replace('14/10/2026', '14/11/2026').replace('l=48', 'l=88').encode('cp1252'))

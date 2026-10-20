@@ -54,6 +54,46 @@ class PairedAdjacentTests(unittest.TestCase):
         ref, number = self.select(reference)
         return self.store.paired_adjacent(ref, target, number, reference)
 
+    def test_click_first_ticket_of_next_archive_keeps_five_previous(self):
+        self.write('R1', trace(*(ticket(35000+i*10, str(i), 'REF_'+str(i)) for i in range(439, 447))), 'TracOmega005.old')
+        self.write('R1', trace(*(ticket(40000+i*10, str(i), 'REF_'+str(i)) for i in range(511, 517)),
+                               previous='TracOmega005.old'), 'TracOmega006.old')
+        self.sync()
+        own = self.paired('REF_444', '444')['columns'][0]
+        destination = next(row for row in own['following'] if row['modbus']=='511')
+        recentered = self.store.paired_adjacent(destination['path'], '511', destination['number'])['columns'][0]
+        self.assertEqual([r['modbus'] for r in recentered['previous']], ['442','443','444','445','446'])
+        self.assertEqual([r['modbus'] for r in recentered['following']], ['512','513','514','515','516'])
+        # Legacy adjacent() retains its original boundary behavior.
+        self.assertFalse(self.store.adjacent(destination['path'], '511', destination['number'])[0])
+
+    def test_previous_chain_completes_after_deduplication(self):
+        self.write('R1', trace(ticket(30000, '440', 'FIRST'), ticket(30010, '441', 'SECOND')), 'TracOmega004.old')
+        self.write('R1', trace(ticket(35000, '441', 'DUPLICATE'), ticket(35010, '443', 'THIRD'),
+                               ticket(35020, '444', 'FOURTH'), previous='TracOmega004.old'), 'TracOmega005.old')
+        self.write('R1', trace(ticket(40000, '511', 'CURRENT'), previous='TracOmega005.old'), 'TracOmega006.old')
+        self.sync()
+        rows = self.paired('CURRENT', '511')['columns'][0]['previous']
+        self.assertEqual([r['modbus'] for r in rows], ['440','441','443','444'])
+        self.assertTrue(rows[1]['path'].path.endswith('TracOmega005.old'))
+
+    def test_local_005_006_boundary_read_only(self):
+        from trace_parser import read_trace, parse_fields
+        source = Path('traces/trace r1')
+        if not (source/'TracOmega005.old').exists() or not (source/'TracOmega006.old').exists():
+            self.skipTest('Local archives absent')
+        for filename, tail in (('TracOmega005.old', True), ('TracOmega006.old', False)):
+            lines = read_trace(source/filename).splitlines()
+            wanted = {str(i) for i in (range(439,447) if tail else range(511,517))}
+            rows = [line for line in lines if parse_fields(line).get('ModBusId') in wanted and parse_fields(line).get('RefProduit')]
+            self.write('R1', '\n'.join(lines[:2]+rows)+'\n', filename)
+        self.sync()
+        path, hits = next((p,hits) for p,hits in self.store.search('ModBusId=511', True) if p.path.endswith('TracOmega006.old'))
+        own = self.store.paired_adjacent(path, '511', hits[0][0])['columns'][0]
+        self.assertEqual(len(own['previous']), 5)
+        self.assertEqual([r['modbus'] for r in own['previous']][-3:], ['444','445','446'])
+        self.assertTrue(all(r['path'].path.endswith('TracOmega005.old') for r in own['previous']))
+
     def test_time_anchor_independent_ids_before_tie_and_source_isolation(self):
         self.write('trace r1', trace(ticket(36000, '10', 'R1_SELECTED')))
         self.write('trace r2', trace(ticket(35990, '10', 'R2_OTHER_PRODUCT'),

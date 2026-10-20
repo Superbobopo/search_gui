@@ -13,6 +13,7 @@ import customtkinter as ctk
 import search_gui as gui
 import trace_sources as sources
 from tests.test_lot_locations import REFERENCE, LOT, trace_block
+from tools.summary_test_support import rendered_summary_text, click_summary
 from tools.ui_test_support import run_gui_check
 
 
@@ -82,10 +83,7 @@ def main():
                 app.btn_next_file.invoke()
                 pump(lambda: app.selection is not None and app.selection is not prior)
                 assert_filtered(LOT)
-            app.result_switch._buttons_dict['Classique'].invoke()
-            text = app.txt.get('1.0', 'end')
-            assert 'Lot ' + LOT + ' —' in text and 'Lot ' + LOT + '0 —' not in text and 'Lot OTHER' not in text
-            app.result_switch._buttons_dict['Synthèse'].invoke()
+            assert_filtered(LOT)
             app._change_theme('Sombre')
             assert_filtered(LOT)
             app.btn_tracking_robot.invoke()

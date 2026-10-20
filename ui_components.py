@@ -210,6 +210,13 @@ class VirtualCard(ctk.CTkFrame):
         self.robot.configure(font=('Segoe UI', meta_size, 'bold'))
         self.source = ctk.CTkLabel(self, anchor='w', height=20, font=('Segoe UI', meta_size))
         self.source.grid(row=1, column=0, columnspan=2, sticky='ew', padx=14, pady=(0, 9))
+        if getattr(owner.view, 'compact_rows', False):
+            self.title.configure(height=18, font=('Segoe UI', 12, 'bold'))
+            self.title.grid_configure(padx=(8, 4), pady=(3, 0))
+            self.robot.configure(height=18, font=('Segoe UI', 10, 'bold'))
+            self.robot.grid_configure(padx=(0, 6), pady=(3, 0))
+            self.source.configure(height=16, font=('Segoe UI', 11))
+            self.source.grid_configure(padx=8, pady=(0, 3))
         self._font = ctk.CTkFont(family='Segoe UI', size=meta_size)
         self._content = None
         for widget in (self, self.title, self.robot, self.source):
@@ -275,7 +282,7 @@ class VirtualCardList(ctk.CTkFrame):
 
     @property
     def row_height(self):
-        return round(76*self._get_widget_scaling())
+        return round((48 if getattr(self.view, 'compact_rows', False) else 76)*self._get_widget_scaling())
 
     def _resize(self, event):
         self.canvas.configure(scrollregion=(0, 0, event.width,

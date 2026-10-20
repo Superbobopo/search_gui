@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import search_gui as gui
 import trace_sources as sources
 from tests.test_paired_adjacent import ticket, trace
+from tools.summary_test_support import rendered_summary_text, click_summary
 from tools.ui_test_support import run_gui_check
 from window_placement import monitor_work_area, native_window_bounds
 
@@ -36,6 +37,10 @@ def main():
                          ticket(50000, '90', 'R1_FAR') if robot == 'R1' else '')
             path.write_text(text, encoding='utf8')
             files[robot], texts[robot] = path, text
+        for name, body in (
+            ('TracOmega005.old', trace(*(ticket(35000+i*10, str(i), 'BOUNDARY_'+str(i)) for i in range(439,447)))),
+            ('TracOmega006.old', trace(*(ticket(40000+i*10, str(i), 'BOUNDARY_'+str(i)) for i in range(511,517)), previous='TracOmega005.old'))):
+            (base/'traces'/'R1'/name).write_text(body, encoding='utf8')
         stack.enter_context(patch.object(sources, 'application_directory', return_value=str(base)))
         stack.enter_context(patch.object(sources, 'desktop_directory', return_value=str(base / 'absent')))
         stack.enter_context(patch.object(sources, 'FIXED_DIRECTORY', str(base / 'missing')))
@@ -75,6 +80,7 @@ def main():
             tree = view.trees[robot]
             key, target = next((key, row) for key, row in view.rows[robot].items() if predicate(row))
             view._yview('moveto', 0)
+            tree.see(key)
             pump()
             box = tree.bbox(key)
             assert box, (robot, key)
@@ -115,7 +121,7 @@ def main():
                 assert columns()['R2']['delta'] == 2
                 assert len(app.adjacent_view.rows['R1']) == len(app.adjacent_view.rows['R2']) == 11
                 for robot, tree in app.adjacent_view.trees.items():
-                    assert tree.item('5', 'values')[1:] == ('10', robot + '_MAIN', robot + '_SN', robot + '_LOT')
+                    assert tree.item('5', 'values')[1:5] == ('10', robot + '_MAIN', robot + '_SN', robot + '_LOT')
                     assert ('current' if robot == 'R1' else 'nearest') in tree.item('5', 'tags')
                 app.adjacent_view.close_button.invoke()
                 pump(lambda: not app.adj_popup.winfo_exists())
@@ -225,7 +231,7 @@ def main():
                 app.keyword.delete(0, 'end')
                 app.keyword.insert(0, 'ABSENT')
                 app.btn_search.invoke()
-                pump(lambda: app.selection is None and 'Aucun fichier' in app.txt.get('1.0', 'end'))
+                pump(lambda: app.selection is None and 'Aucun' in rendered_summary_text(app))
                 release.set()
                 pump(finished.is_set)
                 pump()
@@ -245,7 +251,15 @@ def main():
                 pump(finished.is_set)
                 pump()
                 assert not popup.winfo_exists()
-            print('OK R1/R2 : vrais boutons/clics, 11 voisins independants, champs SN/lot, '
+            search('BOUNDARY_444')
+            app.btn_adjacent.invoke(); pump(ready)
+            for ident in ('445', '446', '511'):
+                click_row('R1', lambda row, ident=ident: row['modbus']==ident)
+            assert [r['modbus'] for r in columns()['R1']['previous']]==['442','443','444','445','446']
+            assert [r['modbus'] for r in columns()['R1']['following']]==['512','513','514','515','516']
+            assert app.selection.path.path.endswith('TracOmega006.old')
+            assert '5 précédents / 5 demandés' in app.adjacent_view.panels[0]['footer'].cget('text')
+            print('OK R1/R2 : vrais boutons/clics et 444/445/446/511 entre archives, 11 voisins independants, champs SN/lot, '
                   'recalage, ecart >5 min, generations candidates et archive supprimee, GET complet/surlignage, '
                   'copie, theme, scroll commun, placement aux bords, reponses obsoletes et fermeture')
         finally:

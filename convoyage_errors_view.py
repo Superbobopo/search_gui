@@ -22,18 +22,52 @@ def anomaly_caption(path, directories):
     return robot, ntpath.basename(os.fspath(path)) + (' · ' + origin if origin else '')
 
 
+class _EmbeddedSplit(SplitView):
+    """Horizontal master/detail, or one pane at a time on small windows."""
+    def __init__(self, parent):
+        self.detail_only = False
+        self.show_detail = False
+        super().__init__(parent, breakpoint=760)
+        self.wide_sash = 240
+
+    def _layout(self):
+        self.pending = None
+        narrow = self.winfo_width()/self._get_widget_scaling()<760
+        self.vertical = False
+        wanted = ([self.right] if self.detail_only or (narrow and self.show_detail)
+                  else [self.left] if narrow else [self.left, self.right])
+        current = [str(p) for p in self.panes.panes()]
+        if current == [str(w) for w in wanted]:
+            return
+        for pane in current:
+            self.panes.forget(pane)
+        for pane in wanted:
+            self.panes.add(pane, minsize=180 if pane is self.left else 280,
+                           width=240 if pane is self.left else 500,
+                           stretch='never' if pane is self.left and len(wanted)>1 else 'always')
+        if len(wanted)==2:
+            self.panes.sash_place(0, round(240*self._get_widget_scaling()), 0)
+
+
 class _StepRow(ctk.CTkFrame):
     def __init__(self, parent, embedded=False):
         super().__init__(parent, corner_radius=0, fg_color='transparent')
-        self.grid_columnconfigure(2, weight=1)
-        self.dot = ctk.CTkLabel(self, text='●', width=18, font=('Segoe UI', 12))
-        self.dot.grid(row=0, column=0, sticky='n', padx=(0, 10), pady=10)
-        self.time = selectable(self, text='', font=('Segoe UI', 12 if embedded else 11))
-        self.time.grid(row=0, column=1, sticky='nw', padx=(0, 16), pady=13)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure((0, 2), uniform='metadata')
+        self.left = ctk.CTkFrame(self, fg_color='transparent', corner_radius=0)
+        self.left.grid(row=0, column=0, sticky='w', padx=(0, 8), pady=5)
+        self.dot = ctk.CTkLabel(self.left, text='●', width=14, font=('Segoe UI', 12))
+        self.dot.pack(side='left', padx=(0, 4))
+        self.time = selectable(self.left, text='', font=('Segoe UI', 12 if embedded else 11))
+        self.time.pack(side='left')
         self.checkpoint = selectable(self, text='', wraplength=350, font=('Segoe UI', 14 if embedded else 12))
-        self.checkpoint.grid(row=0, column=2, sticky='ew', pady=10)
+        self.checkpoint.configure(anchor='center', justify='center')
+        self.checkpoint.grid(row=0, column=1, sticky='ew', pady=5)
         self.status = selectable(self, text='', font=('Segoe UI', 12 if embedded else 10, 'bold'))
-        self.status.grid(row=1, column=2, sticky='ew', pady=(0, 10))
+        self.status.configure(anchor='e', justify='right')
+        self.status.grid(row=0, column=2, sticky='e', padx=(8, 0), pady=5)
+        self.arrow = ctk.CTkLabel(self, text='↓', width=18, height=14, font=('Segoe UI', 16, 'bold'))
+        self.arrow.grid(row=2, column=0, columnspan=3, sticky='n', pady=0)
         self.step = None
 
     def show(self, step):
@@ -42,10 +76,22 @@ class _StepRow(ctk.CTkFrame):
             label.configure(text=step.get(key) or '—')
             label.sync_selection_text()
 
+    def layout(self, width):
+        narrow = width / self._get_widget_scaling() < 500
+        self.checkpoint.grid_configure(row=1 if narrow else 0, column=0 if narrow else 1,
+                                       columnspan=3 if narrow else 1)
+        side = max(self.left.winfo_reqwidth()+8, self.status.winfo_reqwidth()+8)
+        wrap = max(80, width-16 if narrow else width-2*side-24)
+        if self.checkpoint.cget('wraplength') != wrap:
+            self.checkpoint.configure(wraplength=wrap)
+        self.checkpoint.sync_selection_text()
+
     def apply_theme(self, colors):
         role = 'positive_text' if self.step and self.step['etat']=='Présent' else 'error_text'
         self.configure(fg_color=colors['surface'], bg_color=colors['surface'])
+        self.left.configure(bg_color=colors['surface'])
         self.dot.configure(text_color=colors[role], bg_color=colors['surface'])
+        self.arrow.configure(text_color=colors['positive_text'], bg_color=colors['surface'])
         for label, color in ((self.time, 'muted'), (self.checkpoint, 'text'), (self.status, role)):
             label.configure(text_color=colors[color], bg_color=colors['surface'])
             label.sync_selection_text()
@@ -56,6 +102,8 @@ class ConvoyageErrorsView(ctk.CTkFrame):
         super().__init__(parent, corner_radius=0)
         self._theme_deferred = True
         self.app, self.errors, self.embedded = app, list(errors), embedded
+        self.compact_rows = embedded
+        self.parcours = False
         self.selected_index, self.data, self.state = None, None, 'empty'
         self.tasks = BackgroundTasks()
         self.channel = f'convoyage_anomaly:{id(self)}'
@@ -71,7 +119,7 @@ class ConvoyageErrorsView(ctk.CTkFrame):
         if embedded:
             self.header.grid_remove()
         self.title, self.summary, self.close_button = self.header.title, self.header.subtitle, self.header.close_button
-        self.split = SplitView(self, breakpoint=900 if embedded else 860)
+        self.split = _EmbeddedSplit(self) if embedded else SplitView(self, breakpoint=860)
         self.split.grid(row=1, column=0, sticky='nsew', padx=20, pady=(0, 18))
         if embedded:
             self.split.grid_configure(padx=0, pady=0)
@@ -87,20 +135,23 @@ class ConvoyageErrorsView(ctk.CTkFrame):
         self.detail_panel.grid_rowconfigure(1, weight=1)
         register_view(app, self)
         detail_header = ctk.CTkFrame(self.detail_panel, fg_color='transparent')
-        detail_header.grid(row=0, column=0, sticky='ew', padx=20, pady=(16, 10))
+        detail_header.grid(row=0, column=0, sticky='ew', padx=14, pady=(8, 6) if embedded else (16, 10))
         detail_header.grid_columnconfigure(0, weight=1)
         self.detail_title = selectable(detail_header, text='Aucune anomalie détectée' if not count else '', font=('Segoe UI', 20, 'bold'))
-        self.detail_title.grid(row=0, column=0, sticky='ew')
+        self.detail_title.configure(anchor='center', justify='center')
+        self.detail_title.grid(row=0, column=0, columnspan=2, sticky='ew')
         self.detail_source = selectable(detail_header, text='', font=('Segoe UI', 11), wraplength=600)
         self.detail_source.grid(row=1, column=0, sticky='ew', pady=(5, 0))
-        self.path_button = ActionButton(detail_header, text='Copier chemin', role='quiet', width=100, height=28,
-            font=('Segoe UI', 10), text_size=14 if embedded else None, command=lambda: self.copy('path'))
-        self.path_button.grid(row=0, column=1, padx=(12, 0))
+        self.back_button = ActionButton(detail_header, text='Retour à la liste', role='quiet',
+                                        command=self.show_list)
+        self.file_picker = ctk.CTkOptionMenu(detail_header, command=self._pick_file)
+        if embedded:
+            tk.Misc.bind(self, '<Configure>', self._embedded_resize, add='+')
         self.detail_scroll = ctk.CTkScrollableFrame(self.detail_panel, corner_radius=0, fg_color='transparent')
         self.detail_scroll.grid(row=1, column=0, sticky='nsew', padx=(14, 6), pady=(0, 12))
         self.detail_scroll.grid_columnconfigure(0, weight=1)
         self.states = ctk.CTkFrame(self.detail_scroll, fg_color='transparent')
-        self.states.grid(row=0, column=0, sticky='ew', padx=4, pady=(6, 18))
+        self.states.grid(row=0, column=0, sticky='ew', padx=4, pady=(2, 8) if embedded else (6, 18))
         self.states.grid_columnconfigure((0, 1), weight=1, uniform='states')
         self.positive = StateCard(self.states, 'DERNIÈRE POSITION CONNUE')
         self.waiting = StateCard(self.states, 'ATTENTE ENREGISTRÉE')
@@ -131,6 +182,11 @@ class ConvoyageErrorsView(ctk.CTkFrame):
                 card.caption.configure(font=('Segoe UI', 12, 'bold'))
                 card.value.configure(font=('Segoe UI', 14, 'bold'))
                 card.time.configure(font=('Segoe UI', 12))
+        if embedded:
+            for card in (self.positive, self.waiting):
+                card.caption.grid_configure(padx=8, pady=(6, 3))
+                card.value.grid_configure(padx=8)
+                card.time.grid_configure(padx=8, pady=(3, 6))
         self.menu = tk.Menu(self, tearoff=False)
         for title, kind in (('Copier le ModBusId', 'id'), ('Copier la ligne', 'row'), ('Copier le chemin complet', 'path')):
             self.menu.add_command(label=title, command=lambda value=kind: self.copy(value))
@@ -146,7 +202,38 @@ class ConvoyageErrorsView(ctk.CTkFrame):
             self.message.sync_selection_text()
             for widget in (self.states, self.steps_heading, self.provenance_button):
                 widget.grid_remove()
-            self.path_button.configure(state='disabled')
+
+    def configure_parcours(self):
+        self.parcours = True
+        self.split.detail_only = True
+        self.split._layout()
+        self.file_picker.configure(values=[f'{i+1}. {anomaly_caption(p, self.app._selected_directories)[1]}'
+                                           for i, (p, _) in enumerate(self.errors)])
+        self.file_picker.set(f'{(self.selected_index or 0)+1}. '+anomaly_caption(
+            self.errors[self.selected_index or 0][0], self.app._selected_directories)[1])
+        self.file_picker.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(6, 0))
+        if len(self.errors)==1:
+            self.file_picker.grid_remove()
+        self._embedded_resize()
+
+    def _pick_file(self, value):
+        self.select(int(value.split('.', 1)[0])-1)
+
+    def _embedded_resize(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        if not self.embedded:
+            return
+        narrow = self.winfo_width()/self._get_widget_scaling()<760
+        if narrow and self.split.show_detail and not self.parcours:
+            self.back_button.grid(row=2, column=0, sticky='w', pady=(4, 0))
+        else:
+            self.back_button.grid_remove()
+
+    def show_list(self):
+        self.split.show_detail = False
+        self.split._layout()
+        self._embedded_resize()
 
     @property
     def _vertical(self):
@@ -197,7 +284,6 @@ class ConvoyageErrorsView(ctk.CTkFrame):
         self.detail_source.configure(text='')
         self.path_label.configure(text='')
         self.path_label.grid_remove()
-        self.path_button.configure(state='disabled')
         self._show_steps([])
         for widget in (self.states, self.steps_heading, self.provenance_button, self.retry):
             widget.grid_remove()
@@ -210,7 +296,7 @@ class ConvoyageErrorsView(ctk.CTkFrame):
         if width == self._detail_width:
             return
         self._detail_width = width
-        stacked = width<580
+        stacked = width<(400 if self.embedded else 580)
         self.waiting.grid_configure(row=1 if stacked else 0, column=0 if stacked else 1,
             padx=0 if stacked else (6, 0), pady=(8, 0) if stacked else 0)
         self.positive.grid_configure(padx=0 if stacked else (0, 6))
@@ -222,7 +308,7 @@ class ConvoyageErrorsView(ctk.CTkFrame):
             label.configure(wraplength=max(100, width-24))
         self.detail_source.configure(wraplength=max(100, width-30))
         for row in self._step_rows:
-            row.checkpoint.configure(wraplength=max(100, width-150))
+            row.layout(width)
 
     def _poll(self):
         self._poll_id = None
@@ -239,7 +325,13 @@ class ConvoyageErrorsView(ctk.CTkFrame):
                     self.after_cancel(scheduled)
 
     def select(self, index, force=False, preserve_scroll=False):
-        if index is None or not 0<=index<len(self.errors) or (index==self.selected_index and not force):
+        if index is None or not 0<=index<len(self.errors):
+            return 'break'
+        if self.embedded:
+            self.split.show_detail = True
+            self.split._layout()
+            self._embedded_resize()
+        if index==self.selected_index and not force:
             return 'break'
         self.selected_index = index
         self._request += 1
@@ -260,7 +352,6 @@ class ConvoyageErrorsView(ctk.CTkFrame):
         self.retry.grid_remove()
         for widget in (self.states, self.steps_heading, self.provenance_button):
             widget.grid()
-        self.path_button.configure(state='normal')
         self.detail_scroll._parent_canvas.yview_moveto(scroll)
         self.cards.draw()
         self._paint_detail()
@@ -270,10 +361,9 @@ class ConvoyageErrorsView(ctk.CTkFrame):
             with store.snapshot():
                 with store.connection() as db:
                     db.set_progress_handler(lambda: int(cancel.is_set()), 1000)
-                    summary = store.convoyage_summary(modbus, path)
                     if cancel.is_set():
                         raise Cancelled()
-                    return summary, store.convoyage_steps(modbus, path)
+                    return store.convoyage_details(modbus, path)
         def done(result):
             if self._closed or serial!=self._request:
                 return
@@ -316,8 +406,12 @@ class ConvoyageErrorsView(ctk.CTkFrame):
             row = self._step_rows[index]
             row.grid(row=index, column=0, sticky='ew')
             row.show(step)
+            if index < len(steps)-1:
+                row.arrow.grid()
+            else:
+                row.arrow.grid_remove()
             if self._detail_width:
-                row.checkpoint.configure(wraplength=max(100, self._detail_width-150))
+                row.layout(self._detail_width)
         for row in self._step_rows[len(steps):]:
             row.grid_remove()
 
@@ -353,6 +447,10 @@ class ConvoyageErrorsView(ctk.CTkFrame):
 
     def apply_theme(self):
         colors = self.app._palette
+        self.back_button.apply_theme(colors)
+        self.file_picker.configure(fg_color=colors['raised'], button_color=colors['border'],
+                                   button_hover_color=colors['muted'], text_color=colors['text'],
+                                   dropdown_fg_color=colors['surface'], dropdown_text_color=colors['text'])
         self.configure(fg_color=colors['bg'])
         self.split.apply_theme(colors)
         self.header.apply_theme(colors)
@@ -368,7 +466,7 @@ class ConvoyageErrorsView(ctk.CTkFrame):
             label.configure(text_color=colors['text'])
         for label in (self.summary, self.list_heading, self.detail_source, self.message, self.path_label):
             label.configure(text_color=colors['muted'])
-        for button in (self.path_button, self.provenance_button):
+        for button in (self.provenance_button,):
             button.configure(fg_color='transparent', text_color=colors['muted'], hover_color=colors['raised'])
         for button in (self.close_button, self.retry):
             button.configure(fg_color=colors['raised'], text_color=colors['text'], hover_color=colors['border'])

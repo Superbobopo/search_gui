@@ -56,6 +56,36 @@ class TraceFixture(unittest.TestCase):
 
 
 class TraceSourcesTests(TraceFixture):
+    def test_r2_modbus_is_ignored_in_all_roots_and_nested_folders(self):
+        expected = set()
+        for root in (self.installed, self.base / 'traces', self.desktop / 'traces'):
+            expected.add(self.write(root, 'TracMODBUS.txt'))
+            for name in ('R1', 'trace r1', 'R2', 'trace r2'):
+                folder = root / name / 'nested'
+                expected.add(self.write(folder, 'TracOmega.txt'))
+                for filename in ('TracMODBUS.txt', 'tracmodbus001.old'):
+                    path = self.write(folder, filename)
+                    if name.lower() in ('r1', 'trace r1'):
+                        expected.add(path)
+        self.assertEqual(set(sources.discover_trace_files()), expected)
+        self.assertEqual(set(sources.discover_trace_files('tracmodbus')),
+                         {p for p in expected if Path(p).name.lower().startswith('tracmodbus')})
+        self.assertEqual(sources.discover_trace_files('tracmodbus', directories=[self.r2]), [])
+
+    def test_cached_r2_modbus_removed_before_active_store_is_published(self):
+        first = self.write(self.r1, 'TracMODBUS.txt', 'R1_SHARED_MARKER\n')
+        second = self.write(self.r2, 'TracMODBUS.txt', 'R2_IGNORED_MARKER\n')
+        omega = self.write(self.r2, text='OMEGA_R2_KEPT\n')
+        cache = self.base / 'cache.sqlite3'
+        legacy = TraceStore(cache)
+        legacy.sync([first, second, omega])
+        self.assertTrue(legacy.search('R2_IGNORED_MARKER'))
+        active = TraceStore(cache, directories=[str(self.base / 'traces')], defer_history=True)
+        self.assertFalse(active.search('R2_IGNORED_MARKER'))
+        self.assertTrue(active.search('R1_SHARED_MARKER'))
+        self.assertTrue(active.search('OMEGA_R2_KEPT'))
+        self.assertTrue(Path(second).exists())
+
     def test_desktop_sources_keep_homonyms_labels_and_archive_links(self):
         folders = (self.installed, self.r1, self.r2,
                    self.desktop / "traces" / "R1", self.desktop / "traces" / "R2")
@@ -79,7 +109,7 @@ class TraceSourcesTests(TraceFixture):
         root = self.desktop / "traces"
         self.assertEqual(sources.discover_trace_files(), [])
         path = self.write(root / "R1")
-        modbus = self.write(root / "R2", "TracMODBUS.txt")
+        modbus = self.write(root / "R1", "TracMODBUS.txt")
         self.write(root / "R2", "TracMODBUS.SAV")
         self.assertEqual(set(sources.discover_trace_files()), {path, modbus})
         self.assertEqual(sources.discover_trace_files("tracmodbus"), [modbus])
@@ -102,7 +132,7 @@ class TraceSourcesTests(TraceFixture):
         self.assertTrue(sources.trace_label(paths[2]).startswith("Local R2 /"))
 
     def test_missing_installed_directory_and_filters(self):
-        paths = {self.write(self.r1), self.write(self.r2, "TracMODBUS.txt")}
+        paths = {self.write(self.r1), self.write(self.r1, "TracMODBUS.txt")}
         self.write(self.r1, "TracOmega.sav")
         self.write(self.r2, "TracMODBUS.SAV")
         self.write(self.r2, "other.txt")
@@ -110,7 +140,7 @@ class TraceSourcesTests(TraceFixture):
         paths.add(archive)
         self.model._refresh_traces()
         self.assertEqual(set(gui.BUFFER), paths)
-        self.assertEqual(sources.discover_trace_files("tracmodbus"), [str(self.r2 / "TracMODBUS.txt")])
+        self.assertEqual(sources.discover_trace_files("tracmodbus"), [str(self.r1 / "TracMODBUS.txt")])
 
     def test_empty_sources_and_open_without_current_file(self):
         self.model._refresh_traces()
@@ -166,7 +196,7 @@ class TraceSourcesTests(TraceFixture):
 
     def test_convoyage_detail_uses_full_path(self):
         first = self.write(self.r1, "TracMODBUS.txt", "R1;0;123\n")
-        second = self.write(self.r2, "TracMODBUS.txt", "R2;0;123\n")
+        second = self.write(self.desktop / 'traces' / 'R1', "TracMODBUS.txt", "R2;0;123\n")
         all_steps = self.model.get_convoyage_steps("123")
         self.assertEqual(len(all_steps), 2)
         for path, expected in ((first, "R1"), (second, "R2")):

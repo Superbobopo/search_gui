@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
 from unittest.mock import patch
 
@@ -137,15 +138,42 @@ def main():
             assert not windows('Vue de'), 'Dragging a selection must not open a trace'
 
         try:
-            assert app.result_mode.get() == 'Synthèse'
+            assert not hasattr(app, 'btn_copy_path')
+            assert not hasattr(app, 'result_switch') and not hasattr(app, 'classic_frame')
+            assert not hasattr(app, 'txt')
             pump(lambda: app._sources_verified)
-            spy = stack.enter_context(patch.object(app.store, 'comparison_for_occurrence', wraps=app.store.comparison_for_occurrence))
+            gate = threading.Event()
+            entered = threading.Event()
+            original_compare = app.store.comparison_for_occurrence
+            def delayed_compare(path, number, cancel=None):
+                entered.set()
+                while not gate.wait(.01):
+                    app.store._check_cancel(cancel)
+                return original_compare(path, number, cancel)
+            stack.callback(gate.set)
+            spy = stack.enter_context(patch.object(app.store, 'comparison_for_occurrence', side_effect=delayed_compare))
             app.keyword.insert(0, 'A0061574AC')
             app.modbus.set(False)
             app.reference.set(True)
             app.btn_search.invoke()
+            pump(lambda: app.selection is not None and '_summary_current' in app.selection.details and entered.is_set())
+            assert '_summary_comparison' not in app.selection.details
+            assert app.selection.details['_summary_current']['current'] is not None
+            assert 'idpk' in app.summary_targets and 'previous_idpk' not in app.summary_targets
+            assert 'Recherche de la mesure antérieure' in text()
+            from tools.native_test_capture import widget_image
+            output = Path(__file__).resolve().parents[1]/'.benchmark'
+            output.mkdir(exist_ok=True)
+            widget_image(app).save(output/'idpk_progressive_20261020.png')
+            old_details = app.selection.details
+            app.btn_search.invoke()
+            pump(lambda: app.selection is not None and app.selection.details is not old_details
+                 and '_summary_current' in app.selection.details)
+            stage_widgets = {key: app.summary_targets[key] for key in ('get', 'pute', 'location')}
+            gate.set()
             pump(lambda: app.selection is not None and '_summary_comparison' in app.selection.details)
-            pump(lambda: 'Précédente' in text())
+            assert all(app.summary_targets[key] is widget for key, widget in stage_widgets.items())
+            pump(lambda: '_summary_comparison' in app.selection.details)
             selection = app.selection
             for value in ('Référence', 'A0061574AC', 'ID', '1194', 'SN', '343272', 'CodeLot', '261013.127'):
                 assert value in text(), value
@@ -188,7 +216,7 @@ def main():
             popup = windows('Comparaison IDPK')[0]
             popup_text = ' '.join(str(w.cget('text')) for w in descendants(popup) if isinstance(w, gui.tk.Label))
             assert 'Δ l = -7' in popup_text
-            numeric = next(w for w in descendants(popup) if isinstance(w, gui.tk.Label)
+            numeric = next(w for w in descendants(popup) if hasattr(w, 'selection_text')
                            and 'l = 48' in str(w.cget('text')))
             numeric.selection_text.tag_add('sel', '1.0', 'end-1c')
             with patch.object(numeric.selection_text, 'clipboard_clear'), \
@@ -210,10 +238,6 @@ def main():
             assert spy.call_count == calls
             app._sources_verified = True
             app._render_summary(selection.details)
-            app.result_switch._buttons_dict['Classique'].invoke()
-            pump(lambda: app.classic_frame.winfo_ismapped())
-            assert 'RefProduit' in app.txt.get('1.0', 'end')
-            app.result_switch._buttons_dict['Synthèse'].invoke()
             app._change_theme('Sombre')
             pump()
             assert app.selection is selection and spy.call_count == calls
@@ -229,6 +253,22 @@ def main():
             assert 'LOT-39' in text() and 'LOT-40' not in text()
             next(w for w in buttons() if str(w.cget('text')).startswith('Afficher plus')).invoke()
             assert 'LOT-44' in text()
+            # Updating IDPK must not rebuild unrelated cards or reset expanded lots.
+            preserved = {key: app.summary_targets[key] for key in ('get', 'pute', 'location')}
+            target = next(w for w in labels() if str(w.cget('text')).startswith('Lot LOT-00'))
+            check_copy(target, 4, 10, 'LOT-00')
+            canvas = app.summary_frame._parent_canvas
+            canvas.yview_moveto(.25); pump()
+            scroll = canvas.canvasy(0)
+            with patch.object(app.store, '_rows', wraps=app.store._rows) as queries:
+                selection.details['_summary_comparison'] = dict(original_result, message='Comparaison actualisée')
+                app._render_summary(selection.details); pump()
+                assert queries.call_count==0
+            assert all(app.summary_targets[key] is widget and widget.winfo_exists() for key, widget in preserved.items())
+            assert target.selection_text.get('sel.first', 'sel.last')=='LOT-00'
+            assert 'LOT-44' in text() and abs(canvas.canvasy(0)-scroll)<3
+            selection.details['_summary_comparison'] = original_result
+            app._render_summary(selection.details)
             check_open(app.summary_targets['location'], event, original)
             target = next(w for w in labels() if str(w.cget('text')).startswith('Lot LOT-00'))
             check_copy(target, 4, 10, 'LOT-00')
@@ -247,11 +287,11 @@ def main():
             app.btn_next_file.invoke()
             pump(lambda: app.selection is not None and app.selection.path != selection.path
                  and '_summary_comparison' in app.selection.details)
-            assert 'Aucune comparaison disponible' in text()
+            assert 'mesure' in text().lower() and 'aucune' in text().lower()
             assert app.summary_targets['idpk'].cget('text_color') != ('#b42318', '#ff9b91')
             print('OK GET/PUTE/IDPK compacts dans cet ordre, sans titres/boutons/ligne originale/tableau, '
                   'mesures cote a cote, rouge selon seuil >2, vrais doubles-clics sur archives absentes '
-                  'et sur lots avec texte/ligne/surlignage exacts ; theme/Classique et 45 lots conserves')
+                  'et sur lots avec texte/ligne/surlignage exacts ; theme et 45 lots conserves')
             print('OK selection par glisser, copie Ctrl+C et menu Copier : reference/ID/SN/CodeLot/mesures '
                   'et popup ; sous-chaine, lecture seule et theme sombre ; presse-papiers simule')
         finally:

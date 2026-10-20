@@ -17,6 +17,10 @@ class RobotErrorsView(WindowShell):
         files = len({(os.fspath(item['filepath']), getattr(item['filepath'], 'version_id', None)) for item in self.errors})
         super().__init__(parent, app, 'Erreurs robot',
                          f'{count} erreur'+('s' if count!=1 else '')+f' · {files} trace'+('s' if files!=1 else '')+' concernée'+('s' if files!=1 else ''))
+        self.title.configure(text='Erreurs robot — Boîte proposée au robot mais jamais prise sur T5',
+                             wraplength=850, justify='left')
+        self._title_wrap = None
+        tk.Misc.bind(self.title, '<Configure>', self._resize_title, add='+')
         self.body.configure(fg_color=app._palette['bg'])
         self.split = SplitView(self.body)
         self.split.grid(row=0, column=0, sticky='nsew')
@@ -130,6 +134,12 @@ class RobotErrorsView(WindowShell):
                     f'{item["ref"]}\t{item["modbus_id"]}\t{self.values["when"].cget("text")}\t{self.values["source"].cget("text")}')
             self.clipboard_clear(); self.clipboard_append(text)
         return 'break'
+
+    def _resize_title(self, event):
+        width = max(100, round(event.width/self._get_widget_scaling()))
+        if width != self._title_wrap:
+            self._title_wrap = width
+            self.title.configure(wraplength=width)
 
     def _resize_detail(self, event):
         if event.width==self._width:

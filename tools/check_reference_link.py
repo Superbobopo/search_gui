@@ -97,20 +97,8 @@ def main():
             widget.event_generate('<ButtonRelease-1>', x=4, y=4, time=5040)
             pump()
             assert app.reference.get() and query.call_count == count
-            # Classic keeps its historical reverse link; the preferred occurrence stays exact.
-            app.result_switch._buttons_dict['Classique'].invoke()
-            pump()
-            pos = str(app.txt.tag_ranges('clickable_refprod')[0]) + ' +5chars'
-            box = app.txt.bbox(pos)
-            assert box
-            app.txt.event_generate('<Motion>', x=box[0] + 2, y=box[1] + 2)
-            app.txt.event_generate('<ButtonPress-1>', x=box[0] + 2, y=box[1] + 2, time=7000)
-            app.txt.event_generate('<ButtonRelease-1>', x=box[0] + 2, y=box[1] + 2, time=7040)
-            pump(lambda: app.selection is not None and app._active_mode == 'id')
-            assert app.keyword.get() == '1194' and app.search_mode.get() == 'id'
-            assert (app.selection.path, app.selection.number) == (selected.path, selected.number)
             print('OK Synthese : vrai clic reference ID -> reference, champ/radio/recherche et occurrence exacte ; '
-                  'glisser/copier sans recherche, clic deja en reference neutre ; lien Classique preserve, '
+                  'glisser/copier sans recherche, clic deja en reference neutre ; '
                   'fichiers homonymes et ID partage R1/R2')
         finally:
             app._close_indexed_app()

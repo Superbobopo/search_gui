@@ -22,7 +22,7 @@ def main():
         desktop = base/'Desktop'
         paths = []
         for root, robot in ((base/'traces', 'trace r1'), (base/'traces', 'R2'), (desktop/'traces', 'R1')):
-            path = root/robot/'TracMODBUS.txt'
+            path = (root/'R1'/'copies' if robot=='R2' else root/robot)/'TracMODBUS.txt'
             path.parent.mkdir(parents=True)
             path.write_text(records('R2' if robot=='R2' else 'R1'), encoding='utf8')
             paths.append(str(path))
@@ -57,7 +57,7 @@ def main():
             assert color_pixels(image, app._palette['text'])>200
             if app._appearance=='Dark':
                 assert color_pixels(widget_image(workspace), '#ffffff')<1000, 'White containers in Dark mode'
-            image.save(output/f'convoyage_workspace_{name}_20261019.png')
+            image.save(output/f'convoyage_workspace_{name}_20261020.png')
 
         def ready(tab):
             return (workspace.states[tab]['loaded'] and workspace.states[tab]['pending'] is None
@@ -74,6 +74,10 @@ def main():
                 workspace.search_button.invoke()
 
         def click(view, index):
+            if view.parcours:
+                view.file_picker._dropdown_menu._button_callback(view.file_picker.cget('values')[index])
+                pump(lambda: view.selected_index==index and view.state=='ready')
+                return
             view.cards.see(index); settle(.03)
             card = next(card for card, item in view.cards.cards if card.index==index)
             card.title._label.event_generate('<ButtonPress-1>', x=12, y=10)
@@ -100,7 +104,7 @@ def main():
             app._change_theme('Sombre'); capture('initial_dark')
             app._change_theme('Clair')
             with patch.object(app.store, 'convoyage_summary', wraps=app.store.convoyage_summary) as summary, \
-                 patch.object(app.store, 'convoyage_steps', wraps=app.store.convoyage_steps) as steps, \
+                 patch.object(app.store, 'convoyage_details', wraps=app.store.convoyage_details) as steps, \
                  patch.object(app.store, 'convoyage_errors', wraps=app.store.convoyage_errors) as anomalies:
                 search('1000', enter=True)
                 pump(lambda: ready('parcours'))
@@ -112,10 +116,18 @@ def main():
                     click(view, i)
                     path = view.errors[i][0]
                     assert view.data[0][0]['_filepath']==path
-                    assert summary.call_args_list[-1].args==('1000', path)
                     assert steps.call_args_list[-1].args==('1000', path)
                     card = next(card for card, _ in view.cards.cards if card.index==i)
                     assert card.robot.cget('text')=='R1/R2'
+                view.reset_items(view.errors[:1], force=True)
+                view.configure_parcours()
+                pump(lambda: view.state=='ready'); settle()
+                assert len(view.panes.panes())==1 and not view.file_picker.winfo_ismapped()
+                capture('single_file_light')
+                view.reset_items([(p, '1000') for p in paths], force=True)
+                view.configure_parcours()
+                pump(lambda: view.state=='ready')
+                click(view, 2)
                 capture('parcours_light')
                 app._change_theme('Sombre'); capture('parcours_dark')
                 app._change_theme('Clair')
@@ -134,7 +146,7 @@ def main():
                 pump(lambda: ready('anomalies'))
                 errors_view = workspace.views['anomalies']
                 assert len(errors_view.errors)==180
-                assert len(errors_view.cards.cards)<16
+                assert len(errors_view.cards.cards)<24
                 assert '180 anomalies' in workspace.count.cget('text')
                 assert color_pixels(widget_image(errors_view.positive.value.selection_text), app._palette['positive_text'])>3
                 assert color_pixels(widget_image(errors_view.waiting.value.selection_text), app._palette['error_text'])>3
@@ -166,17 +178,56 @@ def main():
                 assert calls==(summary.call_count, steps.call_count, anomalies.call_count)
                 assert workspace.views['anomalies'] is errors_view
                 capture('anomalies_dark')
-                app.geometry('970x880+0+0'); settle()
-                assert errors_view._vertical
-                assert errors_view.panes.cget('orient')=='vertical'
+                app.geometry('1090x820+0+0'); settle()
+                assert not errors_view._vertical
+                assert len(errors_view.panes.panes())==2
+                saved_errors = list(errors_view.errors)
+                errors_view.reset_items(saved_errors[:7], force=True)
+                workspace.count.configure(text='7 anomalies · 1 fichier')
+                pump(lambda: errors_view.state=='ready'); settle()
+                assert errors_view.cards.canvas.winfo_height()>=7*errors_view.cards.row_height
+                rows = [r for r in errors_view._step_rows if r.winfo_ismapped()]
+                assert len(rows)>=5
+                assert sum(r.arrow.winfo_ismapped() for r in rows)==len(rows)-1
+                assert not rows[-1].arrow.winfo_ismapped()
+                for row in rows[:-1]:
+                    assert abs(row.arrow.winfo_x()+row.arrow.winfo_width()/2-row.winfo_width()/2)<3
+                    assert abs(row.checkpoint.winfo_x()+row.checkpoint.winfo_width()/2-row.winfo_width()/2)<3
+                    assert row.checkpoint.cget('anchor')=='center' and row.checkpoint.cget('justify')=='center'
+                arrow_image = widget_image(rows[0].arrow._label)
+                arrow_image.save(output/'convoyage_arrow_probe_20261020.png')
+                assert color_pixels(arrow_image, app._palette['positive_text'])>0
+                title = errors_view.detail_title
+                header = title.master
+                assert abs(title.winfo_x()+title.winfo_width()/2-header.winfo_width()/2)<3
+                canvas = errors_view.detail_scroll._parent_canvas
+                assert rows[4].winfo_rooty()+rows[4].winfo_height()<=canvas.winfo_rooty()+canvas.winfo_height()
+                capture('compact_seven_dark')
+                app.geometry('800x820+0+0'); settle()
+                assert len(errors_view.panes.panes())==1
+                errors_view.back_button.invoke(); settle()
+                assert str(errors_view.list_panel) in [str(p) for p in errors_view.panes.panes()]
+                before_calls = summary.call_count, steps.call_count
+                click(errors_view, errors_view.selected_index); settle()
+                assert str(errors_view.detail_panel) in [str(p) for p in errors_view.panes.panes()]
+                assert before_calls==(summary.call_count, steps.call_count)
+                errors_view.back_button.invoke(); settle()
+                click(errors_view, 2); settle()
+                assert str(errors_view.detail_panel) in [str(p) for p in errors_view.panes.panes()]
+                errors_view.reset_items(saved_errors, preserve=True, force=True)
+                workspace.count.configure(text='180 anomalies · 3 fichiers')
+                pump(lambda: errors_view.state=='ready')
                 capture('narrow_dark')
                 app._change_theme('Clair'); settle()
                 capture('narrow_light')
                 app.geometry('1340x880+0+0'); settle()
+                click(errors_view, errors_view.errors.index(selected))
+                errors_view.cards.canvas.yview_moveto(list_scroll)
+                settle()
                 # Copy uses the exact original path (native clipboard writes mocked).
                 copied = []
                 with patch.object(errors_view, 'clipboard_clear'), patch.object(errors_view, 'clipboard_append', side_effect=copied.append):
-                    errors_view.path_button.invoke()
+                    errors_view.copy('path')
                 assert copied==[selected[0]]
                 # Refresh preserves the selection and list position; no popup.
                 workspace.refresh_button.invoke(); pump(lambda: ready('anomalies'))
@@ -242,7 +293,7 @@ def main():
                 assert 'numérique' in workspace.pages['parcours']['status'].cget('text')
                 search('999999'); pump(lambda: ready('parcours'))
                 assert workspace.pages['parcours']['title'].cget('text')=='Aucune position retrouvée'
-                assert view.selected_index is None and not view.path_button.cget('state')=='normal'
+                assert view.selected_index is None and not hasattr(view, 'path_button')
                 # Failure on a new query has an on-page retry, no messagebox.
                 with patch.object(app.store, 'convoyage_summary', side_effect=RuntimeError('synthetic failure')):
                     search('1004'); pump(lambda: workspace.states['parcours']['error'])

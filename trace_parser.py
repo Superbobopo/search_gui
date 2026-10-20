@@ -3,6 +3,31 @@
 from datetime import datetime
 import re
 
+GRIPPER_COMMAND_RE = re.compile(r'\bGRIPPER\s+([A-Z]+)\b')
+GRIPPER_REPLY_RE = re.compile(r"\bTgripper\b.*?\brep\s*=\s*['\"]([^'\"]*)['\"]", re.I)
+GET_ERROR_RE = re.compile(r'\bErr\s*:\s*r[eé]ponse\s+gripper\s+GET\s*:\s*(.+)', re.I)
+GET_BOX_RE = re.compile(r'\bChargeBoitesDansGripperMB\b.*?\b1\s+bo[iî]tes?(?:\(s\))?\s+\(IDb:(\d+)\(([^()\s]+)\)\)', re.I)
+
+
+def get_box_context(text):
+    """Single-box loading context provides an explicit internal box identity."""
+    match = GET_BOX_RE.search(text)
+    return (match[2], match[1]) if match else None
+
+
+def gripper_reply(text):
+    """An explicit GET error or the reply to the active gripper command."""
+    error = GET_ERROR_RE.search(text)
+    match = error or GRIPPER_REPLY_RE.search(text)
+    if not match:
+        return None
+    value = match[1].strip()
+    failed = bool(error or re.search(r'\b(?:err|error|nok|erreur)\b', value, re.I))
+    status = 'failed' if failed else 'success' if value.casefold() == 'ok' else 'unknown'
+    code = re.search(r'\((-?\d+)\)', value)
+    return dict(status=status, message=value, code=code[1] if code else None,
+                explicit_get=bool(error))
+
 
 FIELD_RE = re.compile(r"\b(RefProduit|SN|CodeLot|ModBusId)\s*=\s*([^<>\s/;]+)")
 STAMP_RE = re.compile(r"^\s*(?:[^\d\s]\s+)?(\d{1,2})\|(\d{2}:\d{2}:\d{2}(?:\.\d+)?)")

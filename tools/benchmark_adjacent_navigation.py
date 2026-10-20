@@ -17,6 +17,7 @@ from unittest.mock import patch
 PROJECT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', required=True)
+parser.add_argument('--stress', action='store_true')
 args = parser.parse_args()
 sys.path.insert(0, str(PROJECT))
 import search_gui as gui
@@ -48,9 +49,9 @@ def main():
         for robot, offset in (('R1', 0), ('R2', 2)):
             folder = base / 'traces' / robot
             folder.mkdir(parents=True)
-            for name, hour in (('TracOmega018.old', 8), ('TracOmega019.old', 12)):
+            for name, hour in ((('TracOmega019.old', 8),) if args.stress else (('TracOmega018.old', 8), ('TracOmega019.old', 12))):
                 lines = ['creation de la trace de ... Le 14/10/2026\n']
-                for i in range(300):
+                for i in range(5000 if args.stress else 300):
                     stamp = datetime(2026, 10, 14, hour) + timedelta(seconds=i * 10 + offset)
                     def at(extra):
                         return (stamp + timedelta(seconds=extra)).strftime('%d|%H:%M:%S.0')
@@ -78,6 +79,7 @@ def main():
                 time.sleep(.002)
             raise AssertionError('Benchmark timeout: ' + app.status.get())
         queries = [0]
+        transferred = [0]
         lock = threading.Lock()
         def trace_sql(sql):
             with lock:
@@ -92,6 +94,13 @@ def main():
                     db.set_trace_callback(trace_sql)
                     yield db
             stack.enter_context(patch.object(app.store, 'connection', counted))
+            original_rows = app.store._rows
+            def counted_rows(*a, **kw):
+                result = original_rows(*a, **kw)
+                with lock:
+                    transferred[0] += len(result)
+                return result
+            stack.enter_context(patch.object(app.store, '_rows', counted_rows))
             app.mode_radios['ref'].invoke()
             app.keyword.insert(0, 'REF0250')
             app.btn_search.invoke()
@@ -102,12 +111,12 @@ def main():
                 prior = app.selection
                 app.btn_next_file.invoke()
                 pump(lambda: app.selection is not None and app.selection is not prior)
-            start, q = time.perf_counter(), queries[0]
+            start, q, r = time.perf_counter(), queries[0], transferred[0]
             app.btn_adjacent.invoke()
             pump(lambda: app.adjacent_view.data is not None)
-            cold = dict(ms=(time.perf_counter()-start)*1000, queries=queries[0]-q)
+            cold = dict(ms=(time.perf_counter()-start)*1000, queries=queries[0]-q, transferred_rows=transferred[0]-r)
             samples = []
-            for target in ['1251', '1252', '1251', '1250'] * 3:
+            for target in (['1251', '1252', '1253', '1252', '1251', '1250'] if args.stress else ['1251', '1252', '1251', '1250'] * 3):
                 view = app.adjacent_view
                 before_widgets = tuple(str(tree) for tree in view.trees.values())
                 key = next(key for key, row in view.rows['R1'].items() if row['modbus']==target)
@@ -115,19 +124,19 @@ def main():
                 tree.see(key)
                 pump()
                 x, y, width, height = tree.bbox(key)
-                start, q = time.perf_counter(), queries[0]
+                start, q, r = time.perf_counter(), queries[0], transferred[0]
                 tree.event_generate('<ButtonPress-1>', x=x+10, y=y+height//2)
                 tree.event_generate('<ButtonRelease-1>', x=x+10, y=y+height//2)
                 pump(lambda: app.selection is not None and app.selection.modbus==target
                      and view.data is not None and view.data['selected']['modbus']==target
                      and '_summary_comparison' in app.selection.details)
-                samples.append(dict(ms=(time.perf_counter()-start)*1000, queries=queries[0]-q,
+                samples.append(dict(ms=(time.perf_counter()-start)*1000, queries=queries[0]-q, transferred_rows=transferred[0]-r,
                                     same_widgets=before_widgets==tuple(str(t) for t in view.trees.values())))
-            report = dict(corpus='4 temporary OMEGA files, 1200 tickets, 300 identities, 2 robots',
+            report = dict(corpus=('2 temporary OMEGA files, 10000 tickets, 5000 identities, 2 robots' if args.stress else '4 temporary OMEGA files, 1200 tickets, 300 identities, 2 robots'),
                           cold=cold, navigation=samples,
                           median_ms=statistics.median(s['ms'] for s in samples),
                           median_queries=statistics.median(s['queries'] for s in samples),
-                          rss_bytes=rss(), database_bytes=app.store.database.stat().st_size)
+                          cache_weight=app.store._analysis_cache.weight, rss_bytes=rss(), database_bytes=app.store.database.stat().st_size)
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(json.dumps(report, indent=2), encoding='utf8')
             print(json.dumps({k: v for k, v in report.items() if k!='navigation'}))

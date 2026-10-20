@@ -38,6 +38,23 @@ def main():
                     row = ticket(sec,str(ident),'A0110543AC','261012.095','343132')
                 else:
                     row = measured(sec,str(ident),robot+'_REF'+str(ident),sn='SN'+str(ident),lot='LOT'+str(ident))
+                if (robot, ident) in (('R1', 1054), ('R2', 1052)):
+                    lines = row.splitlines(True)
+                    lines.insert(2, "r [Tgripper = 5s rep ='Err NOK (-32092)']\nG 14|10:02:00.0 Err: reponse gripper GET: Err NOK (-32092)\n")
+                    row = ''.join(lines)
+                if (robot, ident)==('R1', 1050):
+                    lines = row.splitlines(True)
+                    lines.insert(2, "r [Tgripper = 5s rep ='OK']\n")
+                    row = ''.join(lines)
+                if (robot, ident)==('R2', 1051):
+                    lines = row.splitlines(True)
+                    context = "b 'ChargeBoitesDansGripperMB' 1 boite(s) (IDb:142509(R2_REF1051)) en $0101\n"
+                    retry = lines[1].replace('10:01:53.0', '10:01:56.0')
+                    row = (lines[0]+context+lines[1]+"r [Tgripper = 1s rep ='Err NOK (-7)']\n"
+                           +"G GRIPPER REF\nr [Tgripper = 1s rep ='OK']\n"+context+retry
+                           +"r [Tgripper = 1s rep ='OK']\n"
+                           +lines[2].replace('10:01:53.500000', '10:01:57.500000')
+                           +lines[-1].replace('10:01:54.0', '10:01:58.0'))
                 rows.append(row)
             path=folder/'TracOmega019.old'
             path.write_text(trace(*rows),encoding='utf8')
@@ -88,6 +105,9 @@ def main():
                  and app.selection.number==target['number'] and ready(robot,modbus))
             assert tuple(str(p['tree']) for p in view.panels)==before
             return target
+        def manual(counts):
+            view.before_var.set(str(counts[0])); view.after_var.set(str(counts[1]))
+            view.apply_button.invoke()
         def rendered(robot,modbus,different,expected_red=None):
             view=app.adjacent_view
             key,item=row(robot,modbus)
@@ -98,7 +118,10 @@ def main():
             x,y,width,height=tree.bbox(key,'ref')
             image=widget_image(tree).crop((x,y,x+width,y+height))
             reds=color_pixels(image,app._palette['error_text'])
-            expected=app._palette['error_text'] if visible_red else app._palette['text']
+            failed = item.get('get_diagnostic', {}).get('failed') and app._sources_verified and app._indexed_complete
+            if failed and visible_red:
+                assert tree.item(key, 'values')[-1]=='IDPK + échec GET'
+            expected=app._palette['error_text'] if visible_red else app._palette['warning_text'] if failed else app._palette['text']
             foreground=color_pixels(image,expected)
             if foreground<3 or (not visible_red and reds):
                 folder=Path(__file__).resolve().parents[1]/'.benchmark'
@@ -120,7 +143,29 @@ def main():
             pump(lambda:app.selection is not None)
             app.btn_adjacent.invoke()
             pump(lambda:ready('R1','1050'))
+            pump(lambda: app.selection and app.selection.modbus=='1050')
+            assert app.selection.details['get_diagnostic']['status']=='success'
+            assert 'get_status' not in app.summary_targets
+            assert 'get_response_0' not in app.summary_targets
             view=app.adjacent_view
+            from adjacent_view import listing_text
+            view.copy_button.invoke()
+            app.update()
+            copied = view.clipboard_get()
+            assert copied==listing_text(view.data, app._selected_directories)
+            assert copied.index('R1')<copied.index('R2')
+            assert 'SN :' in copied and 'Lot :' in copied and '🟢 ➜ ' in copied
+            assert 'TracOmega' not in copied and 'Repère' not in copied
+            assert sum(' | ID :' in line for line in copied.splitlines())==sum(
+                len(c.get('previous', []))+1+len(c.get('following', []))
+                for c in view.data['columns'] if c.get('anchor'))
+            published = view.data
+            view.loading()
+            assert view.copy_button.cget('state')=='disabled'
+            view.copy_lists()
+            assert view.clipboard_get()==copied
+            view.show(published)
+            assert view.copy_button.cget('state')=='normal'
             rendered('R1','1054',True)
             for target in ('1051','1055','1054'):
                 click('R1',target)
@@ -145,6 +190,22 @@ def main():
             rendered('R2','1052',False)
             click('R2','1052')
             rendered('R2','1052',False)
+            assert app.selection.details['get_diagnostic']['failed']
+            assert app.selection.details['pute'] is not None
+            assert '-32092' in view.get_detail.cget('text')
+            pump(lambda: 'get_status' in app.summary_targets)
+            assert not any(key.startswith('get_response_') for key in app.summary_targets)
+            for theme in ('Clair', 'Sombre'):
+                app._change_theme(theme); pump()
+                rendered('R2','1052',False)
+                assert color_pixels(widget_image(app.summary_targets['get_status'].selection_text), app._palette['warning_text'])>3
+                assert color_pixels(widget_image(view.get_detail.selection_text), app._palette['warning_text'])>3
+                output = Path(__file__).resolve().parents[1]/'.benchmark'
+                output.mkdir(exist_ok=True)
+                widget_image(view).save(output/f'get_neighbors_{theme}_20261020.png')
+                widget_image(app).save(output/f'get_summary_{theme}_20261020.png')
+            def traces():
+                return [w for w in app.winfo_children() if getattr(w, 'trace_controller', None)]
             pump(lambda:'_summary_comparison' in app.selection.details)
             assert app.selection.details['_summary_comparison']['status']=='missing_measurement'
             assert 'rattachable' in view.detail.cget('text')
@@ -152,8 +213,58 @@ def main():
             labels=' '.join(str(w.cget('text')) for w in descendants(compare_windows()[0]) if isinstance(w,gui.tk.Label))
             assert 'rattachable' in labels and '343132' in labels
             close_comparisons()
+            gate = threading.Event()
+            original_compare = app.store.comparison_for_occurrence
+            def delayed_compare(path, number, cancel=None):
+                while not gate.wait(.01):
+                    app.store._check_cancel(cancel)
+                return original_compare(path, number, cancel)
+            with patch.object(app.store, 'comparison_for_occurrence', side_effect=delayed_compare):
+                try:
+                    start = time.perf_counter()
+                    click('R2','1051')
+                    pump(lambda: '_summary_current' in app.selection.details)
+                    assert '_summary_comparison' not in app.selection.details
+                    assert app.selection.details['_summary_current']['current'] is not None
+                    assert 'idpk' in app.summary_targets and 'previous_idpk' not in app.summary_targets
+                    assert app.summary_targets['idpk'].cget('text_color')==app._palette['text']
+                    print('Mesure actuelle apres clic voisin:', round((time.perf_counter()-start)*1000, 1), 'ms')
+                finally:
+                    gate.set()
+                pump(lambda: '_summary_comparison' in app.selection.details)
+            pump(lambda: 'get_attempt_1' in app.summary_targets)
+            diagnostic = app.selection.details['get_diagnostic']
+            assert diagnostic['status']=='recovered' and diagnostic['failed']
+            recovered_key = next(key for key, row in view.rows['R2'].items() if row['modbus']=='1051')
+            assert view.trees['R2'].item(recovered_key, 'values')[-1]=='Échec GET'
+            assert len(diagnostic['attempts'])==2
+            pump(lambda: '_summary_comparison' in app.selection.details)
+            assert app.selection.details['_summary_comparison']['current'] is not None
+            assert 'idpk' in app.summary_targets
+            assert app.summary_targets['get_status'].cget('text')=='Tentative 1 — Échec GET'
+            assert app.summary_targets['get_attempt_status_1'].cget('text')=='Tentative 2 — GET réussi'
+            assert app.summary_targets['get'].master != app.summary_targets['get_attempt_1'].master
+            retry = diagnostic['attempts'][1]['get']
+            assert app.summary_targets['get_attempt_1'].cget('text')==retry['text']
+            assert not any(key.startswith('get_response_') for key in app.summary_targets)
+            visible = ' '.join(str(w.cget('text')) for w in descendants(app.summary_frame) if isinstance(w, gui.ctk.CTkLabel))
+            assert 'Tgripper' not in visible and 'reponse gripper' not in visible
+            widget = app.summary_targets['get_attempt_1'].selection_text
+            for i in range(2):
+                widget.event_generate('<ButtonPress-1>', x=15, y=8, time=400000+i*100)
+                widget.event_generate('<ButtonRelease-1>', x=15, y=8, time=400020+i*100)
+            pump(lambda: bool(traces()) and traces()[0].trace_controller.loaded)
+            assert traces()[0].trace_controller.text.index('highlight.first')==str(retry['number']+1)+'.0'
+            traces()[0].destroy()
+            output = Path(__file__).resolve().parents[1]/'.benchmark'
+            for theme in ('Clair', 'Sombre'):
+                app._change_theme(theme); pump()
+                rendered('R2','1051',False)
+                assert color_pixels(widget_image(app.summary_targets['get_attempt_1'].selection_text), '#8ac7ff' if theme=='Sombre' else '#00589b')>3
+                widget_image(app).save(output/f'get_retry_{theme}_20261020.png')
+            click('R2','1052')
             for counts in ((5,10),(5,30),(5,5)):
-                view.presets[counts].invoke()
+                manual(counts)
                 pump(lambda:view.data and (view.data['before_count'],view.data['after_count'])==counts)
                 assert app._adjacent_counts==counts
             for value in ('-1','1001','3.5','abc'):
@@ -163,17 +274,26 @@ def main():
                 view.before_var.set(str(counts[0])); view.after_var.set(str(counts[1])); view.apply_button.invoke()
                 pump(lambda:view.data and (view.data['before_count'],view.data['after_count'])==counts)
                 assert all(len(p['tree'].get_children())<=42 for p in view.panels)
+            view.copy_button.invoke(); app.update()
+            assert view.clipboard_get()==listing_text(view.data, app._selected_directories)
+            assert view.clipboard_get().count(' | ID :')>40, 'Off-screen rows missing'
+            view.copy_button._canvas.event_generate('<Enter>'); pump()
+            assert view._copy_tip is not None
+            view.copy_button._canvas.event_generate('<Leave>'); pump()
+            output = Path(__file__).resolve().parents[1]/'.benchmark'
+            output.mkdir(exist_ok=True)
+            widget_image(view).save(output/'adjacent_copy_20261020.png')
             # One scrollbar, synchronized vertical tables, header/control geometry fixed.
             header_y=view.heading.winfo_rooty()
             tree=view.trees['R1']; first=tree.yview()[0]
             tree.event_generate('<MouseWheel>',delta=-120); pump()
             assert tree.yview()[0]>first and abs(tree.yview()[0]-view.trees['R2'].yview()[0])<.00001
             assert view.heading.winfo_rooty()==header_y
-            view.presets[(5,10)].invoke(); pump(lambda:view.data and view.data['after_count']==10)
+            manual((5,10)); pump(lambda:view.data and view.data['after_count']==10)
             view.close_button.invoke(); app.btn_adjacent.invoke(); pump(lambda:ready('R2','1052'))
             view=app.adjacent_view
             assert (view.before_var.get(),view.after_var.get())==('5','10')
-            view.presets[(5,5)].invoke(); pump(lambda:view.data and view.data['after_count']==5)
+            manual((5,5)); pump(lambda:view.data and view.data['after_count']==5)
             click('R1','1054')
             for theme in ('Sombre','Clair'):
                 app._change_theme(theme); pump()
@@ -208,14 +328,14 @@ def main():
                 try:return original(*args,**kwargs)
                 finally:finished.set()
             with patch.object(app.store,'paired_adjacent',slow):
-                view.presets[(5,30)].invoke(); pump(started.is_set)
-                view.presets[(5,10)].invoke()
+                manual((5,30)); pump(started.is_set)
+                manual((5,10))
                 release.set(); pump(finished.is_set)
                 pump(lambda:view.data and view.data['after_count']==10)
                 assert view.data['after_count']==10
             print('OK options/IDPK : reglages 0..1000, widgets conserves, scroll commun, '
-                  'pixels rouges R1/1054 a toutes positions/themes et neutres R2/1052, '
-                  'trois affichages coherents, copie, archive et requetes depassees')
+                  'pixels rouges IDPK + GET R1/1054 et orange GET R2/1052, '
+                  'preuves GET ouvrables en Synthese, copie, archive et requetes depassees')
         finally:
             release.set()
             app._close_indexed_app(); app._index_thread.join(5)

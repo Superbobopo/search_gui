@@ -2,6 +2,457 @@
 
 Chaque intervention livrée ajoute une entrée ici. Consulter également `AGENTS.md` avant de modifier l'application. Les dates de travaux antérieurs n'étant pas établies, leur historique est reconstitué ci-dessous à la date de consignation ; cela ne leur attribue pas une date de réalisation inventée.
 
+## 2026-10-20 — Publication des améliorations sur GitHub
+
+Demande explicite : pousser l'ensemble des changements actuels sur `https://github.com/Superbobopo/search_gui`, branche `main`. Lot de 52 fichiers de code, tests et documentation : Convoyage, suivi Référence/SN/CodeLot, voisins et diagnostic GET, IDPK progressive et optimisations de fluidité. Les détails et vérifications de chaque intervention restent conservés ci-dessous.
+
+Préparation exécutée : lecture des consignes et du journal, `git status --short`, `git branch --show-current`, `git remote -v`, `git log`, `git diff --stat`, `git ls-files --others --exclude-standard`, puis `git fetch origin` et `git rev-list --left-right --count HEAD...origin/main` : réussite, divergence `0 / 0`, aucun conflit à résoudre. `git -c core.whitespace=cr-at-eol diff --check` réussi, avertissement LF/CRLF préexistant sur `trace_parser.py` uniquement. Compilation en mémoire par `py -3.13 -B` et `compile()` : 49 fichiers Python modifiés ou nouveaux réussis.
+
+Limites : aucun changement fonctionnel supplémentaire ni nouvelle exécution des suites déjà validées pour cette seule publication. Traces, bases locales, rapports/captures `.benchmark/`, environnements et builds restent exclus par les règles Git existantes ; aucun exécutable reconstruit. Le résultat du commit et du push sera consigné après confirmation du serveur.
+
+## 2026-10-20 — Navigation Synthèse sans reconstruction des cartes
+
+Demande : atténuer les petites pauses et le clignotement lors des incréments/décréments ModBusId et du clic sur la référence. La précision de l'utilisateur cible surtout ces deux actions ; le simple passage entre fenêtres déjà ouvertes n'a pas reproduit de blocage dans l'exploration sur bureau privé.
+
+Causes reproduites : chaque recherche détruisait immédiatement la Synthèse pour afficher son état vide, puis reconstruisait identité, GET/PUTE, IDPK et lots. Chaque progression IDPK détruisait encore ses champs. Le passage ID → Référence refaisait ce cycle malgré une occurrence conservée. Les callbacks de redimensionnement s'accumulaient sur la carte IDPK persistante. La vidéo fournie (17,53 s, 30 images/s) a été examinée par extraction d'images temporaires : panneau vide puis réapparition progressive visibles.
+
+Livré :
+
+- Un seul ensemble de composants réutilisables dans `summary_widgets.py`, alimenté par `summary_view.py`. Mise à jour des seuls textes/couleurs/destinations modifiés ; les cellules IDPK ne sont plus détruites. Conserver sélection, défilement et pagination si leurs données sont inchangées. Réserve de vingt lots et quatre tentatives inutilisés ; les cartes excédentaires sont supprimées une par callback différé, annulé à la destruction.
+- Pendant « Chargement… », anciennes cartes conservées, sélection invalidée et ouvertures/clic référence/pagination neutralisés. Un résultat absent vide les anciennes valeurs/destinations. Application du résultat courant dans le même passage Tk et rejet des réponses dépassées. Aucun délai ajouté aux clics, chaque +/− garde son pas.
+- Bindings installés une fois et destinations actualisées, un seul callback de redimensionnement par conteneur. Le clic Référence recherche toujours les groupes/compteurs ; réutiliser les analyses uniquement pour chemin complet, génération, ticket, révision et contenus métier/critère de lot identiques. La révision accompagne les détails dans leur instantané worker ; ne pas réutiliser les erreurs.
+- Retour de page : reprendre l'analyse IDPK annulée même si le cache visuel est inchangé, sans recréer les champs. Aucun changement de services métier, seuils, PUTE ou présentation des tentatives.
+
+Mesures avant/après : même cache réel de 65 fichiers, ouvert exclusivement en lecture seule, même révision, détails/groupes/comparaisons intégralement identiques. Cinq cycles de vrais clics 1054 → 1053 → 1052 → 1053 → 1054 puis clic Référence. Le dernier rapport après a été exécuté seul, sans autre contrôle graphique simultané. Les pauses sont les intervalles entre callbacks Tk planifiés toutes les 8 ms, dessin et traitement des événements compris.
+
+| Mesure | Avant | Après validé |
+| --- | ---: | ---: |
+| Premier cycle : callback, médiane | 32,80 ms | 1,60 ms |
+| Premier cycle : résultat complet, médiane | 389,25 ms | 141,17 ms |
+| Premier cycle : plus grand intervalle Tk par navigation, médiane | 114,16 ms | 40,54 ms |
+| Retours, cycles 2 à 5 : callback, médiane | 33,65 ms | 1,63 ms |
+| Retours : résultat complet, médiane | 354,13 ms | 106,56 ms |
+| Retours : plus grand intervalle Tk par navigation, médiane | 119,71 ms | 40,66 ms |
+| Retours : pire intervalle Tk observé | 168,48 ms | 48,57 ms |
+| Widgets natifs créés/détruits par retour, médiane | 230 / 230 | 0 / 0 |
+| Clic Référence : callback | 47,04 ms | 8,51 ms |
+| Clic Référence : résultat complet | 451,71 ms | 67,46 ms |
+| Clic Référence : plus grand intervalle Tk | 145,96 ms | 9,54 ms |
+| Clic Référence : widgets natifs créés/détruits | 302 / 302 | 0 / 0 |
+| Rendu IDPK actuelle, médiane | 21,68 ms | 0,63 ms |
+| Rendu comparaison finale, médiane | 22,03 ms | 0,50 ms |
+
+La première visite de 1052 crée 24 widgets natifs supplémentaires pour les tentatives GET ; aucune des vingt transitions ne détruit de widget. Sur les retours, réduction observée d'environ 66 % des pauses et de 70 % du délai complet ; environ 93 % pour l'intervalle Tk du clic Référence. Ces chiffres ne garantissent pas une disparition absolue des micro-pauses.
+
+Commandes et vérifications réellement exécutées :
+
+- Lecture des consignes, journal et modules concernés ; extraction vidéo avec FFmpeg extrait d'une roue imageio-ffmpeg dans `%TEMP%`, sans installation ni modification du venv. Profils exploratoires sur bureau privé et cache en lecture seule, rapports `%TEMP%/tracomega_micro_lag_*_20261020.json` et `tracomega_reference_lag_inspection_20261020.json`. `New-Item`/`Copy-Item` ont préservé les deux modules avant intervention dans `.benchmark/micro_lag_baseline_20261020/`.
+- `py -3.13 -B tools/benchmark_summary_navigation.py --module-dir .benchmark/micro_lag_baseline_20261020 --output .benchmark/summary_navigation_before_20261020.json`, puis même pilote avec `--compare .benchmark/summary_navigation_before_20261020.json` et sorties neuves `summary_navigation_after_20261020.json`, `summary_navigation_final_20261020.json`, `summary_navigation_validated_20261020.json` : réussis. SQLite `mode=ro`/`query_only=ON`, synchronisation/préparation interdites, révision/taille/mtime inchangées. Résultats métier identiques à chaque passage. Le rapport `final` avait un autre contrôle graphique concurrent : son premier cycle n'est pas retenu dans le tableau. Dernier passage isolé retenu, tous les rapports conservés sans écrasement.
+- `py -3.13 -B tools/check_summary_navigation.py` : réussi sur bureau privé et données temporaires. Vrais clics +/− et Référence, mêmes widgets entre occurrences, bindings stables, chargement retardé et ouverture ancienne bloquée, annulation lors des clics rapides, erreur/reprise, nouveau GET ouvert avec texte/numéro/surlignage exacts, aucun nouvel appel d'analyse au clic Référence inchangé, retour de page sans recherche, retour pendant comparaison interrompue, nouvelle révision, absence de lots, extension à 45 lots puis libération du surplus et résultat vide. Rejoué après ajout du retour pendant IDPK.
+- `py -3.13 -B tools/check_reference_link.py` : réussi, vrai clic Référence et occurrence exacte, glisser/copier sans recherche, clic déjà en Référence neutre, fichiers homonymes et ID partagé entre robots.
+- `py -3.13 -B tools/check_summary.py` : réussi, IDPK progressive retardée, sélection/copie de fragments, ouvertures exactes dont archives absentes, couleurs, thème sombre, 45 lots, sélection/défilement conservés sans requête supplémentaire. Premier essai en développement : `NameError` sur l'en-tête après extraction du constructeur ; corrigé. L'inspection a aussi révélé une finalisation manquante du rendu sans lots : corrigée et couverte par le nouveau contrôle.
+- `py -3.13 -B tools/check_adjacent_options.py` : réussi, clic depuis voisins, IDPK progressive, pixels GET/IDPK, reprises, copie, destinations et réponses dépassées. Mesure locale depuis un voisin : 138,9 ms, sans mesure UI avant équivalente.
+- `py -3.13 -B -m unittest tests.test_summary_view -v`, puis `-q` au dernier passage : 6 tests réussis. Ajouts : réutilisation limitée à l'occurrence/révision/critères, générations et chemins distincts, refus des erreurs ; rejet des anciennes réponses toujours vérifié. Compilation en mémoire avec `compile()` de six fichiers concernés réussie ; `git -c core.whitespace=cr-at-eol diff --check` réussi, avertissement LF/CRLF préexistant sur `trace_parser.py` uniquement.
+- Captures Clair/Sombre `summary_navigation_after_20261020*.png`, Sombre `summary_navigation_validated_20261020_dark.png` et chargement `summary_navigation_loading_20261020.png` inspectées : cartes/identités/couleurs conservées, résultat précédent et « Chargement… » visibles. Bureau utilisateur jamais sélectionné.
+
+Limites : premier cycle après recherche initiale 1054, caches partiellement alimentés et cache disque non purgé ; ce n'est pas un démarrage à froid. Le dessin conserve des pauses de quelques dizaines de millisecondes, et une structure inédite doit créer ses champs. Échantillon limité à cette séquence/révision. Copie de fragments vérifiée par vrais événements avec appels presse-papiers simulés, sans écriture du presse-papiers Windows global. Aucun contrôle Convoyage ni suite sans rapport relancé. Aucune modification des traces, du cache réel, des bases permanentes, copies historiques, environnements ou builds ; aucun exécutable reconstruit.
+
+## 2026-10-20 — Diagnostics de reprise différés, validation sur le cache réel
+
+Demande : supprimer les diagnostics historiques inutiles après constat d'une lenteur encore excessive. Le profil en lecture seule du cache réel de **65 fichiers, environ 2,2 Gio**, avait montré près de 3 s pour la comparaison R1/1054 et 5,5 s pour les voisins. Cause : le rattachement IDPK ciblé lançait encore le diagnostic gripper pour chaque référence de chaque archive, même lorsque tous les GET portant une mesure avaient déjà leur ticket. La dispersion sur plusieurs dizaines d'archives n'était pas représentée dans les précédents benchmarks synthétiques ; leurs gains ne démontraient pas la fluidité de ce cas réel.
+
+Changements :
+
+- Préanalyse des lignes déjà sélectionnées, triées par numéro original, pour reconnaître les associations ordinaires et détecter les GET sans nouveau ticket portant une mesure. Le diagnostic des réponses n'est demandé que pour ces références si un propriétaire antérieur est possible dans la même génération. La construction des associations réutilise ensuite ces lignes et le résultat éventuel du diagnostic existant.
+- Les reprises IDb, identités complètes, changements de ticket, ambiguïtés et limites de commande restent traités par le même service GET. Les diagnostics complets de la sélection et des voisins affichés restent calculés ; seules les analyses historiques sans utilité pour le rattachement sont supprimées. Interfaces, résultats, cache borné par révision, attentes annulables et présentation inchangés.
+- Contrôle reproductible en lecture seule `tools/benchmark_real_history.py`, avec sortie des résultats métier complets, comparaison intégrale avant/après et contrôle de révision/taille/date du cache. Pilote privé `tools/check_real_history_ui.py` pour recherche, navigation de fichiers, ouverture des voisins, clic de voisin, comparaison à la référence et ouverture/surlignage exact GET sur les données réelles.
+
+Mesures avant/après sur le **même cache réel et la même révision**, sans profilage cProfile additionnel, sans synchronisation ni préparation d'historique. Les étapes partagent les caches d'analyse en mémoire d'un parcours normal ; aucune purge du cache disque Windows :
+
+| Étape de service | Avant | Après | Appels de diagnostic par fichier avant → après |
+| --- | ---: | ---: | ---: |
+| Détails R1/1054 | 138,81 ms | 141,36 ms | 1 → 1 |
+| Mesure actuelle | 1,46 ms | 1,82 ms | 1 → 0 |
+| Comparaison historique | 2 923,38 ms | 14,86 ms | 35 → 0 |
+| Première demande des voisins | 5 328,30 ms | 529,81 ms | 51 → 3 |
+| Navigation vers 1062, services complets | 1 825,00 ms | 141,89 ms | 40 → 3 |
+| Navigation vers 1060, services complets | 1 030,33 ms | 79,35 ms | 28 → 3 |
+| Retour vers 1054 déjà en cache | 9,25 ms | 8,72 ms | 0 → 0 |
+
+Les appels comptent aussi les accès pouvant être servis par les caches. La comparaison passe de 611 à 7 requêtes `_rows`, les voisins de 1 741 à 248 ; les diagnostics des voisins après correction concernent deux fichiers distincts contre 49 auparavant. **Tous les résultats métier sérialisés sont exactement identiques** : détails GET/PUTE/IDPK, mesures retenues, différences, tentatives et réponses originales, identités, générations et destinations des deux robots, y compris les trois navigations. Taille et date de modification du cache réel inchangées.
+
+Commandes et vérifications réellement exécutées :
+
+- Lecture des consignes, journal, modules et contrôles concernés. Copie préalable des trois modules de service dans `.benchmark/history_lazy_baseline_20261020` par `New-Item`/`Copy-Item`, sans modifier `old/` ni `PythonProject1/`.
+- `py -3.13 -B tools/benchmark_real_history.py --module-dir .benchmark/history_lazy_baseline_20261020 --output .benchmark/real_history_before_20261020.json`, puis `py -3.13 -B tools/benchmark_real_history.py --output .benchmark/real_history_after_20261020.json --compare .benchmark/real_history_before_20261020.json` : réussis. Rapports complets conservés sans écrasement, ouverture SQLite `mode=ro` et `query_only=ON`, garde-fous interdisant `sync`, `prepare_history` et `prepare_analysis`. Révision, taille et mtime comparées avant/après ; aucune indexation lancée.
+- `py -3.13 -B -m unittest tests.test_get_diagnostics tests.test_occurrence_comparison.ExactComparisonTests tests.test_summary_view -q` : **37 tests réussis**. Ajouts : historique ordinaire interrobots sans aucun appel de diagnostic de reprise, conservation des diagnostics des deux voisins affichés, GET sans ticket et sans mesure sans diagnostic inutile. Le contrôle concurrent a été adapté pour porter sur une vraie reprise mesurée : mutualisation et annulation restent vérifiées. Les régressions existantes vérifient reprise confirmée et IDPK, GET sans preuve, identité ambiguë, nouveaux tickets, générations, publication et annulation.
+- `py -3.13 -B tools/check_adjacent_options.py` puis `py -3.13 -B tools/check_summary.py` : réussis sur bureau Windows privé, vraies interactions, couleurs GET/IDPK, reprise et mesure actuelle, copie, ouvertures exactes, sélection/annulation et réponses dépassées. Aucun contrôle Convoyage relancé.
+- `py -3.13 -B tools/check_real_history_ui.py --baseline .benchmark/real_history_before_20261020.json --output .benchmark/real_history_ui_20261020.json` : réussi sur bureau privé, cache réel en lecture seule, taille/date inchangées. Durées complètes observées après : recherche initiale 574,40 ms, ouverture de la fenêtre des voisins 729,45 ms, clic vers 1062 avec recalage et comparaison finale 456,05 ms. Résultats de recherche sélectionnée et des voisins comparés exactement au rapport avant correction ; double-clic réel sur GET et texte/numéro du surlignage vérifiés dans la trace sauvegardée. Ces durées UI n'ont pas de mesure UI avant équivalente ; ne pas les comparer directement aux seuls temps de service.
+- Captures `.benchmark/real_history_ui_20261020.png` et `real_history_ui_20261020_neighbors.png` inspectées : comparaison et mesure actuelles présentes, lignes des deux robots lisibles, repère central, alerte GET orange et écarts IDPK rouges conservés.
+- Compilation en mémoire via `py -3.13 -B -c` et `compile()` sur cinq fichiers concernés : réussie. Recherches et lectures ciblées, `git -c core.whitespace=cr-at-eol diff --check` réussi avec avertissement LF/CRLF préexistant sur `trace_parser.py` uniquement.
+
+Limites : mesures du cas R1/1054 et de deux voisins puis retour, sur une seule révision réelle avec cache disque non purgé ; pas de garantie de ces durées pour toute sélection ou première indexation. Les historiques comportant réellement des reprises mesurées conservent leur coût de diagnostic. Les détails GET et le rendu Tk ont toujours un coût visible. Aucune modification des traces, du cache réel ou des bases permanentes, aucune migration de schéma, aucun exécutable reconstruit. Les contrôles utilisent uniquement la lecture seule et le bureau Windows privé ; suites sans rapport non relancées.
+
+## 2026-10-20 — Régression des voisins corrigée, étapes alignées et MODBUS.old vérifié
+
+Demande : corriger la lenteur et la forte activité CPU des IDs adjacents après l'optimisation récente, centrer les descriptions au-dessus des flèches et vérifier la prise en compte de `TracMODBUS.old`.
+
+Cause reproduite : `file_associations()` étendait les références sélectionnées à toutes celles des fichiers, puis reconstruisait leurs associations complètes. Un fichier de 5 000 tickets dépasse le budget de cette représentation ; l'alternance des gros diagnostics évincait aussi les caches des tickets/voisins. Un clic sur une nouvelle occurrence pouvait ainsi retransférer plus de 100 000 lignes. Le petit benchmark précédent, huit fichiers de 60 tickets d'une seule référence, n'avait pas détecté cette régression et ne caractérisait pas la navigation réelle entre références distinctes.
+
+Livré :
+
+- Associations ciblées sur les références demandées et réutilisation des lignes déjà sélectionnées par lot. Cache compact par fichier/génération/référence/révision, partagé entre IDPK actuelle, comparaison et voisins. Aucun agrandissement du budget de 24 000 unités logiques.
+- Diagnostic GET ciblé : tickets et commandes des références demandées, recherche des vraies commandes GRIPPER précédente/suivante, contextes IDb et réponses uniquement dans leurs intervalles exacts. Les marqueurs REF/EMPTY nécessaires sont conservés ; toute opération GRIPPER borne les réponses. Pour les références denses, sélection adaptative d'un seul flux utile au lieu de requêtes répétées par GET, sans construire les états des références étrangères. GET inconnu/échec/reprise et identités exactes restent inchangés.
+- Verrous de construction par fichier et révision, avec attente annulable. Une analyse locale et un diagnostic concurrent du même contenu réutilisent le résultat au lieu de refaire le travail. Lookup du ticket et diagnostic sélectionné conservés dans le cache de révision ; pas de réponse ancienne publiée.
+- Descriptions Convoyage centrées sur le même axe que les flèches. Heure/puce et état occupent des zones latérales symétriques en mode large ; sous 500 px logiques, métadonnées au-dessus de la description centrée. Textes longs repliables et sélectionnables, aucune flèche après la dernière étape. Présentation appliquée aux vues intégrées et autonomes, couleurs conservées.
+- Tests explicites de découverte et de chargement d'un `.old` seul puis d'un `.txt` avec un autre parcours, chemins distincts et copie R2 ignorée. La découverte existante acceptait déjà `.old` : aucune nouvelle règle de découverte ajoutée.
+
+Mesures représentatives sur bureau Windows privé, deux fichiers OMEGA temporaires de **5 000 tickets chacun**, 5 000 références distinctes, même corpus et vrais clics avant/après :
+
+| Mesure | Avant | Dernier passage après |
+| --- | ---: | ---: |
+| Ouverture des voisins, caches partiellement alimentés par la recherche initiale | 539,39 ms | 246,92 ms |
+| Navigation complète, médiane de six clics | 1 191,01 ms | 317,64 ms |
+| Lignes transférées lors de l'ouverture | 55 143 | 10 267 |
+| Lignes transférées par clic vers une nouvelle référence | 100 174 à 115 180 | 96 |
+| Lignes transférées par clic de retour | 100 174 | 8 |
+| Requêtes SQL par navigation, médiane | 92 | 36,5 |
+| Poids logique du cache final | 20 159 | 10 501 |
+| Mémoire résidente finale du processus | 190 095 360 octets | 87 539 712 octets |
+
+Environ **73 % de réduction** de la navigation mesurée. La première ouverture exécute davantage de petites requêtes ciblées (123 contre 58), mais transfère beaucoup moins de lignes. Les tableaux gardent leurs widgets pendant tous les clics. La recherche initiale précède cette ouverture : il ne s'agit pas d'un démarrage disque froid. La mémoire finale n'est pas un pic, et les mesures ne garantissent pas les mêmes durées sur les 65 fichiers réels.
+
+Commandes et vérifications réellement exécutées :
+
+- `py -3.13 -B tools/benchmark_adjacent_navigation.py --stress --output .benchmark/adjacent_stress_before_20261020.json` avant changement des services, puis rapports neufs `adjacent_stress_after_20261020.json`, `adjacent_stress_final_20261020.json` et `adjacent_stress_validated_20261020.json` : réussis, sans écrasement. Médianes après successives : 323,20, 326,60 puis 317,64 ms ; dernier rapport retenu, tous conservés. Index temporaires de même taille, 14 487 552 octets.
+- `py -3.13 -B -m unittest tests.test_get_diagnostics tests.test_occurrence_comparison.ExactComparisonTests tests.test_convoyage_details -q` : **34 tests réussis au dernier passage**. Ajouts : égalité exacte entre diagnostics ciblés et flux complet avec références entrelacées ; même vérification sur un historique dense ; partage d'une construction entre mesure locale et diagnostic concurrent ; annulation effective pendant l'attente d'un verrou ; gros fichiers de 5 000 tickets avec moins de 200 lignes transférées pour une comparaison exacte ; `.old` seul, coexistence `.txt` distinct et exclusion R2. Les cas existants couvrent reprises IDb, GET sans preuve, identité ambiguë, autres opérations, ID réutilisé, générations, publication et annulation.
+- Pendant l'adaptation, les premiers essais ont relevé deux erreurs d'indentation, puis l'absence du champ référence dans le ticket minimal transmis au diagnostic. Ces points ont été corrigés. Un test a aussi révélé une lecture superflue du ticket déjà en cache : cache du résultat par ticket/révision ajouté. Le SELECT de référence inclut le texte original pour rester compatible avec l'instrumentation des lignes transférées. Les cas concernés ont ensuite réussi.
+- `py -3.13 -B tools/benchmark_idpk.py --output .benchmark/idpk_dense_regression_20261020.json` : réussi après ajout du parcours adaptatif dense, corpus précédent de huit fichiers/480 tickets/48 000 lignes de bruit. IDPK locale 12,84 ms, comparaison complète 169,81 ms, à chaud 1,06 ms, 5 054 lignes transférées, pic d'allocations Python 3 749 515 octets. Vérifie l'absence d'explosion de requêtes pour une référence très fréquente ; ce corpus reste distinct du benchmark des voisins.
+- `py -3.13 -B tools/check_adjacent_options.py` : réussi sur bureau privé, vrais clics, alertes GET/IDPK, mesure actuelle pendant comparaison retardée, copie, ouvertures/surlignages exacts, changements de sélection et réponses dépassées. Le benchmark stress exerce également simultanément le chargement Synthèse et le recalage des voisins.
+- `py -3.13 -B tools/check_convoyage_cards.py` et `py -3.13 -B tools/check_convoyage_workspace.py` : réussis sur bureau privé. Assertions géométriques du centre des descriptions et flèches, Clair/Sombre, large/étroit, page et fenêtre autonome, clavier/copie, réponses dépassées, erreur/reprise et fermeture pendant chargement. Le pilote cartes a été rejoué après ajout du fond explicite des métadonnées et d'une capture montrant les descriptions étroites, pas seulement l'en-tête.
+- `py -3.13 -B tools/check_summary.py` : réussi, progression IDPK, copie de fragments, ouverts exacts, sélection, pagination des lots et thèmes conservés.
+- Captures `.benchmark/convoyage_workspace_compact_seven_dark_20261020.png`, `convoyage_workspace_narrow_light_20261020.png` et `convoyage_centered_small_20261020.png` inspectées : descriptions sur l'axe des flèches et disposition étroite visible. Les noms historiques du pilote cartes en 20261019 ne datent pas leur nouvelle exécution.
+- Compilation en mémoire de dix fichiers concernés via `py -3.13 -B -c` et `compile()` : réussie. Lectures/recherches `rg`, `git diff --numstat` et `git -c core.whitespace=cr-at-eol diff --check` : contrôle d'espaces réussi, avertissement LF/CRLF préexistant sur `trace_parser.py` uniquement.
+
+Limites : corpus synthétique représentatif des gros fichiers et références distinctes, cache disque Windows non purgé, un rapport avant et plusieurs passages après. Pas de profil CPU natif ni de mesure de ventilation, pas de benchmark sur les sources/cache réels. L'affichage complet conserve un coût Tk visible ; aucune promesse d'instantanéité absolue. Aucune modification des traces, schémas/bases permanents, copies historiques, environnements ou builds ; aucun exécutable reconstruit. Suites sans rapport non relancées.
+
+## 2026-10-20 — Mises à jour Synthèse ciblées et lecture Convoyage unique
+
+Demande : optimiser les deux premières pistes proposées sans changer le fonctionnement. Causes confirmées : chaque progression de l'analyse IDPK reconstruisait toute la Synthèse et ses premiers vingt lots ; le détail Convoyage exécutait deux fois la même requête MODBUS et décodait deux fois chaque ligne pour produire résumé et étapes.
+
+Livré :
+
+- `summary_view.py` distingue l'identité et les données métier du panneau de l'état IDPK. Quand seul ce dernier change, le cadre IDPK est conservé et ses enfants seuls sont remplacés. Les cartes GET/PUTE, l'identité et les lots gardent leurs widgets, sélection de texte, pagination et défilement. Une nouvelle occurrence, des événements différents ou une modification des données de base reconstruisent le panneau nécessaire. Thème et coordination des réponses dépassées restent inchangés.
+- `TraceStore.convoyage_details(reference, path=None)` retourne `(résumé, étapes)` depuis une seule lecture triée et un seul décodage par ligne, dans le même instantané. Les transformations historiques sont extraites dans des helpers communs ; `convoyage_summary()` et `convoyage_steps()` gardent leur interface et leurs résultats. `ConvoyageErrorsView` utilise le service combiné en page intégrée comme en fenêtre autonome, avec le même chemin exact et les mêmes règles d'annulation.
+- Consignes, contrôles graphiques, tests de régression et pilote de mesure privé actualisés. Les spies du détail surveillent le nouveau service, tandis que la recherche initiale de fichiers continue de contrôler l'API de résumé.
+
+Mesures avant/après sur données temporaires identiques, bureau Windows privé, médianes de trois cycles :
+
+| Mesure | Avant | Après final |
+| --- | ---: | ---: |
+| Mise à jour IDPK avec vingt lots déjà affichés sur 45 disponibles | 483,43 ms | 66,32 ms |
+| Widgets détruits par mise à jour, médiane des deux transitions de chaque cycle | 420,5 | 32,5 |
+| Widget GET conservé pendant les transitions | Non | Oui |
+| Chargement Convoyage sur 1 000 lignes | 43,47 ms | 31,85 ms |
+| Requêtes de lignes MODBUS par détail | 2 | 1 |
+| Décodages MODBUS par détail | 2 000 | 1 000 |
+
+Soit environ **86 % de réduction** pour la mise à jour Synthèse et **27 %** pour le chargement Convoyage sur ces corpus. Le rendu IDPK lui-même reste reconstruit ; il ne s'agit ni d'une navigation complète ni d'une garantie sur les traces réelles.
+
+Commandes et vérifications réellement exécutées :
+
+- `py -3.13 -B tools/benchmark_summary_convoyage.py --output .benchmark/summary_convoyage_before_20261020.json`, avant modification des modules actifs, puis sorties neuves `summary_convoyage_after_20261020.json` et `summary_convoyage_final_20261020.json` : réussies sans écraser les rapports. Premier passage après : Synthèse 66,94 ms, Convoyage 32,56 ms ; passage final après renforcement de l'identité du cache : 66,32 et 31,85 ms.
+- `py -3.13 -B -m unittest tests.test_convoyage_details.ConvoyageDetailsTests tests.test_trace_store.StoreTests.test_modbus_steps_summary_recap_and_birth_rule -v` : 3 tests réussis, sorties exactement égales aux API compatibles, fichiers homonymes et chemins exacts, ordre, attente et dernier état positif, absence, une seule lecture/décodage et publication entre les transformations. Le cas des registres inconnus a ensuite été renforcé avec la colonne 1 indexée mais non documentée : test ciblé `test_combined_outputs_exact_paths_order_and_single_decode` réussi.
+- `py -3.13 -B tools/check_summary.py` : réussi, puis réexécuté après ajout de l'assertion sur les widgets conservés lors de la vraie progression locale → finale : réussi. Teste aussi 45 lots développés conservés après actualisation, sélection de fragment de lot, position de défilement, aucune requête `_rows` pendant la mise à jour visuelle, copie, doubles-clics et surlignages exacts des générations supprimées, thèmes et ancienne réponse rejetée.
+- `py -3.13 -B tools/check_convoyage_workspace.py` : réussi, page intégrée, vrais boutons/Entrée/clics, trois sources homonymes, tailles large/étroite, thèmes, chemins exacts, onglets/sélections/défilements, réponses dépassées, erreur/reprise, actualisation après publication et fermeture pendant chargement.
+- `py -3.13 -B tools/check_convoyage_cards.py` : réussi, fenêtre autonome, 180 anomalies et 10 000 lignes virtualisées, clavier/copie, affichage Clair/Sombre et étroit, états absents et registres inconnus, chemins exacts du service combiné, retard/erreur/reprise et fermeture en cours de requête. Le message final du pilote a ensuite été corrigé pour nommer la requête partagée plutôt que les deux anciennes requêtes.
+- Captures `.benchmark/idpk_progressive_20261020.png` et `.benchmark/convoyage_cards_dark_20261019.png` produites par ces contrôles puis inspectées : mesure et états lisibles, présentation conservée. Les noms historiques des captures du pilote Convoyage sont conservés ; leur date dans le nom ne décrit pas la date de cette exécution.
+- Compilation en mémoire par `py -3.13 -B -c` et `compile()` sur huit fichiers concernés : réussie. Recherches `rg`, lectures ciblées et `git -c core.whitespace=cr-at-eol diff --check` : réussi, avertissement LF/CRLF préexistant sur `trace_parser.py` uniquement.
+
+Limites : mesures sur corpus synthétiques et bureau privé, trois cycles sans purge du cache Windows, aucun benchmark du corpus réel ni mesure de mémoire résidente. Aucun changement des règles métier, traces, schémas/bases permanentes, copies historiques, environnements ou artefacts de build ; aucun exécutable reconstruit. Les trois autres pistes d'optimisation restent hors de cette intervention ; suites sans rapport non relancées.
+
+## 2026-10-20 — IDPK actuelle progressive et comparaison accélérée
+
+Demande : afficher plus vite l'IDPK actuelle et accélérer le calcul historique. Causes : Synthèse attendait le résultat complet, les clics depuis les voisins calculaient la comparaison avant de publier leurs détails, et le diagnostic GET transférait toutes les lignes de chaque fichier vers Python. Le rattachement IDPK était recalculé par référence sans cache commun des associations de fichier.
+
+Livré :
+
+- API `TraceStore.current_measurement_for_occurrence(path, number, cancel=None)` avec mesure exacte, statut et révision, utilisant la même association locale que le comparateur final. Cache commun borné par fichier/génération/révision, mutualisation par lots même si un fichier dépasse le budget. Pas d'héritage d'identité sans preuve de reprise.
+- Lecture GET filtrée dans SQLite sur les tickets, commandes GRIPPER de toute opération, réponses et contextes IDb, avec ordre et numéros originaux. Réponses insensibles à la casse et reprises longues conservées. Aucun changement de schéma ou besoin de réindexation.
+- Publication locale dans un premier worker, puis comparaison historique dans un second travail annulable du même canal. Mesure actuelle visible pendant « Recherche de la mesure antérieure… », sans rouge anticipé. Le résultat final remplace le stade local, y compris sa révision. Les anciens résultats de sélection restent rejetés. Suppression de la comparaison bloquante dans le chargement depuis les voisins. Clé de cache visuel enrichie pour reconnaître le stade local et sa mesure.
+- Consignes, tests de service, pilotes graphiques et benchmark temporaire ajoutés/adaptés. PUTE, seuils IDPK et présentation GET inchangés.
+
+Mesures réellement exécutées, même corpus synthétique de 8 fichiers, 480 tickets et 48 000 lignes de bruit, index temporaire, médianes de trois analyses avec cache applicatif vidé, allocations instrumentées par `tracemalloc` :
+
+| Mesure de service | Avant | Après final |
+| --- | ---: | ---: |
+| Disponibilité de la mesure actuelle | 709,44 ms (attendait le complet) | 10,95 ms |
+| Mesure locale + comparaison complète | 709,44 ms | 164,30 ms |
+| Comparaison à chaud | 1,086 ms | 1,059 ms |
+| Lignes transférées vers Python | 51 913 | 4 866 |
+| Pic d'allocations Python | 5 163 857 octets | 4 995 294 octets |
+| Poids logique du cache | 3 378 | 6 258 (budget 24 000) |
+
+Réduction du calcul à froid : **76,8 %**, objectif de 30 % dépassé sur ce corpus ; environ 90,6 % de lignes transférées en moins. Le cache retient davantage d'associations pour éviter de les recalculer. Le pic Python n'est pas une mesure de mémoire résidente totale et les durées instrumentées ne prédisent pas celles des 65 fichiers réels.
+
+Commandes et vérifications réellement exécutées :
+
+- `py -3.13 -B tools/benchmark_idpk.py --output .benchmark/idpk_before_20261020.json`, avant changement du service, puis sorties neuves `idpk_after_20261020.json` et `idpk_after_final_20261020.json` après mutualisation finale : réussies, rapports conservés sans écrasement. Mesure intermédiaire complète 173,41 ms, finale 164,30 ms.
+- `py -3.13 -B -m unittest tests.test_get_diagnostics tests.test_occurrence_comparison.ExactComparisonTests -q` : 22 tests réussis après extraction de l'association. Série étendue ensuite avec `tests.test_summary_view` : 27 réussis, un échec du nouveau test de publication car il sélectionnait l'ancienne génération archivée ; le pilote choisit maintenant explicitement la copie actuelle et vérifie séparément l'ancienne. Cas corrigé exécuté avec succès, puis enrichi et réexécuté avec succès pour vérifier les deux générations.
+- Nouveaux cas ciblés `test_reference_batch_does_not_repeat_uncacheable_file_analysis` et `test_filtered_stream_keeps_long_retry_and_case_insensitive_replies` : réussis. Couvrent budget de cache minimal, plusieurs références, 5 000 lignes de bruit entre étapes, reprise confirmée, arrêt d'association par EMPTY et réponse TGRIPPER majuscule. Les autres nouveaux cas couvrent API locale, égalité avec le résultat final, absence, ambiguïté, annulation et invalidation après publication.
+- `py -3.13 -B tools/check_summary.py` : réussi sur bureau privé après un premier échec révélant que le cache visuel ignorait le stade local (corrigé). Comparaison volontairement bloquée, mesure actuelle déjà visible, nouvelle recherche pendant blocage, ancienne réponse rejetée, copie/ouvertures exactes et thèmes conservés. Capture `.benchmark/idpk_progressive_20261020.png` inspectée : mesure neutre présente pendant la recherche antérieure.
+- `py -3.13 -B tools/check_adjacent_options.py` : réussi après adaptation puis ajout des assertions de progression et couleur neutre. Clic réel de voisin avec comparaison retardée, mesure courante visible avant résultat final, reprise et IDPK conservées. Dernière navigation instrumentée : 342,9 ms jusqu'à la mesure visible, cache déjà alimenté par le voisinage ; aucune comparaison avant/après UI revendiquée pour cette durée. Captures de reprise Clair/Sombre inspectées.
+- Compilation en mémoire de dix fichiers concernés via `py -3.13 -B -c` et `compile()` : réussie. Recherches `rg`, lectures ciblées et `git -c core.whitespace=cr-at-eol diff --check` : réussi, avertissement LF/CRLF préexistant sur `trace_parser.py` uniquement.
+
+Limites : benchmark synthétique, trois passages avec cache applicatif froid mais sans purge du cache disque Windows ; pas de benchmark des traces/cache réels ni de mesure mémoire résidente. Le diagnostic initial du fichier sélectionné reste nécessaire pour établir l'identité exacte ; sur un gros fichier, son temps n'est pas nul. Aucun résultat de comparaison n'est inventé pendant l'attente. Suites sans rapport non relancées. Aucune trace, base permanente, copie historique, environnement ou build modifié ; aucun exécutable reconstruit.
+
+## 2026-10-20 — Flèches de convoyage centrées
+
+Demande : centrer les flèches entre les étapes. Cause : leur cellule occupait uniquement la colonne des puces à gauche.
+
+Changement : flèches vertes centrées sur les quatre colonnes de chaque ligne, dans la page intégrée et la fenêtre autonome. Dernière étape toujours sans flèche. Consigne ajoutée et assertion de régression mesurant le centre réel des widgets.
+
+Vérifications : `py -3.13 -B tools/check_convoyage_workspace.py` réussi sur bureau Windows privé, dont centrage des flèches, couleurs, cinq étapes visibles, modes large/étroit et sélection. Capture `.benchmark/convoyage_workspace_compact_seven_dark_20261020.png` inspectée. `git -c core.whitespace=cr-at-eol diff --check` réussi, avertissement LF/CRLF préexistant sur `trace_parser.py`. Aucun changement des traces, services ou bases permanentes ; aucun exécutable reconstruit. Pas de suites sans rapport relancées.
+
+## 2026-10-20 — Cartes sans réponses techniques gripper
+
+Demande : retirer les lignes Tgripper OK/NOK et « Err: reponse gripper » jugées inutiles, également pour PUTE. Cause : ces preuves techniques surchargeaient les cartes malgré les états explicites déjà affichés.
+
+Changements : réponses brutes GET masquées, pour échec simple et reprises ; commandes, états des tentatives et couleurs conservés. PUTE reste limité à sa commande, sans ajout de réponse technique. Les réponses restent analysées et conservées dans les données et traces brutes. Consigne et contrôle graphique actualisés ; les tests vérifient l'absence des réponses affichées et conservent l'ouverture exacte de la reprise.
+
+Vérifications : `py -3.13 -B tools/check_adjacent_options.py` réussi sur bureau privé, dont reprise, IDPK actuelle, absence des réponses techniques, navigation et copie. Capture `.benchmark/get_retry_Clair_20261020.png` inspectée : deux blocs compacts, commandes et états lisibles sans réponses brutes. `git -c core.whitespace=cr-at-eol diff --check` réussi avec avertissement LF/CRLF préexistant sur `trace_parser.py`. Suites sans rapport non relancées ; aucune trace ou base permanente modifiée, aucun build reconstruit.
+
+## 2026-10-20 — Rattachement IDPK après reprise GET confirmée
+
+Demande : expliquer et corriger l'IDPK actuelle absente après une prise finalement réussie (capture BAL00197.00, ID 443). Cause identifiée dans le code : `occurrence_comparison.py` consommait le ticket au premier GET et traitait toute reprise sans nouveau ticket comme une commande sans identité, même lorsque le diagnostic GET prouvait déjà la même boîte par son IDb. La mesure de la reprise était donc ignorée.
+
+Changements : réutilisation du diagnostic GET commun, par fichier/génération et révision, pour rattacher les tentatives confirmées au ticket initial. Les mesures de ces tentatives participent à la comparaison exacte commune à Synthèse, aux voisins et au bouton Comparer IDPK. Aucun héritage pour un GET sans preuve ; un nouveau ticket interrompt le rattachement. Plusieurs mesures restent explicitement ambiguës. Aucun changement des dimensions, seuils IDPK, filtres d'identité ou règles PUTE.
+
+Vérifications réellement exécutées :
+
+- `py -3.13 -B -m unittest tests.test_get_diagnostics tests.test_occurrence_comparison.ExactComparisonTests -q` : 22 tests réussis. Nouveau cas : deux échecs puis réussite avec IDb confirmé et mesure 104/49/195 ; mesure rattachée à l'occurrence initiale, rejet si GET sans preuve ou nouveau ticket.
+- `py -3.13 -B tools/check_adjacent_options.py` : réussi sur bureau privé. Corpus temporaire enrichi d'une mesure après reprise ; clic réel depuis les voisins, IDPK actuelle présente en Synthèse, preuves et navigation conservées. Capture `.benchmark/get_retry_Clair_20261020.png` inspectée : IDPK actuelle 104/50/195 visible avec sa date et provenance.
+- Compilation en mémoire de trois fichiers concernés par `py -3.13 -B -c` : réussie. `git -c core.whitespace=cr-at-eol diff --check` réussi, avertissement LF/CRLF préexistant sur `trace_parser.py` uniquement. Recherche en lecture seule dans les emplacements de traces disponibles : le cas BAL00197.00/443 de la capture n'a pas été retrouvé ; aucune valeur réelle prétendue validée pour ce cas précis.
+
+Limites : défaut reproduit et corrigé avec un corpus temporaire, pas de validation du fichier exact de la capture absent des sources disponibles. Aucune modification des traces, bases permanentes ou builds, aucun exécutable reconstruit. Les suites sans rapport n'ont pas été relancées.
+
+## 2026-10-20 — Tentatives GET séparées dans Synthèse
+
+Demande : clarifier la carte montrant un GET échoué puis une prise réussie. Cause : un fond orange commun et un diagnostic global mélangeaient visuellement la commande échouée, ses erreurs et la reprise réussie.
+
+Changements : chaque tentative est regroupée dans son propre bloc numéroté, avec « Tentative 1 — Échec GET » sur fond orange puis « Tentative 2 — GET réussi » sur fond vert. Commandes et réponses restent sélectionnables et ouvrables sur leurs lignes exactes ; la commande réussie conserve son bleu. Pas de modification des diagnostics, du PUTE, de la colonne État ou de la copie des listes. Un GET directement réussi reste compact. Consignes et contrôle ciblé actualisés.
+
+Vérifications : `py -3.13 -B tools/check_adjacent_options.py` réussi sur bureau Windows privé, dont assertions sur les deux titres, conteneurs distincts, navigation et ouverture exacte de la commande de reprise. Captures `.benchmark/get_retry_Clair_20261020.png` et `get_retry_Sombre_20261020.png` inspectées : blocs orange/vert distincts et textes lisibles. `git -c core.whitespace=cr-at-eol diff --check` réussi, avertissement LF/CRLF préexistant de `trace_parser.py` uniquement. Suites sans rapport non relancées ; aucune trace/base permanente modifiée, aucun exécutable reconstruit.
+
+## 2026-10-20 — Libellé Échec GET conservé dans les voisins
+
+Demande : revenir au libellé précédent dans la colonne État plutôt que « Échec puis reprise ». Cause : une reprise réussie introduisait un libellé différent dans le tableau.
+
+Changement : afficher « Échec GET » pour une occurrence ayant échoué, y compris après reprise, en gardant son orange et le détail complet des tentatives dans Synthèse. Aucune modification de l'analyse ni de la copie des listes. Consigne ajoutée et assertion de régression sur une reprise confirmée.
+
+Vérification : `py -3.13 -B tools/check_adjacent_options.py` réussi sur bureau Windows privé, dont le libellé du tableau après reprise et la conservation des preuves de réussite en Synthèse. `git -c core.whitespace=cr-at-eol diff --check` réussi avec avertissement LF/CRLF préexistant sur `trace_parser.py`. Pas de suites sans rapport relancées, de modification des traces/bases ou de reconstruction d'exécutable.
+
+## 2026-10-20 — Suppression des boutons Copier chemin
+
+Demande : retirer les boutons de copie du chemin jugés inutiles. Cause : commandes visibles superflues dans les en-têtes Recherche et Convoyage.
+
+Changements : suppression des boutons, de leurs mises à jour d'état et du callback dédié de Recherche. Suppression également dans les fenêtres autonomes Convoyage ; le titre centré utilise l'espace libéré. Provenance, infobulles et copie contextuelle conservées. Consignes et pilotes concernés adaptés, avec assertions d'absence des anciens boutons.
+
+Vérifications réellement exécutées : compilation en mémoire de sept fichiers concernés via `py -3.13 -B -c` : réussie. `py -3.13 -B tools/check_summary.py` : réussi sur bureau privé, absence du bouton, copie des données et ouvertures exactes conservées. `py -3.13 -B tools/check_convoyage_workspace.py` : réussi sur bureau privé, parcours/anomalies, thèmes, dimensions, sélection, provenance exacte, fenêtre autonome et fermeture pendant chargement. Recherches `rg` et `git -c core.whitespace=cr-at-eol diff --check` : aucun bouton résiduel dans les modules actifs concernés, contrôle d'espaces réussi (avertissement LF/CRLF préexistant sur `trace_parser.py`). Une recherche avec glob Windows a été reprise avec chemins explicites.
+
+Limites : les autres pilotes adaptés n'ont pas été relancés. Aucune modification des traces, bases permanentes ou builds ; aucun exécutable reconstruit.
+
+## 2026-10-20 — Synthèse comme unique présentation des résultats
+
+Demande : supprimer entièrement le mode Classique et ses deux boutons de sélection. Cause : deux rendus actifs et deux commandes conservés alors que l'utilisateur souhaite uniquement Synthèse.
+
+Changements : suppression du panneau texte Classique, de sa construction, de son rendu dans `indexed_ui.py`, de son état et du sélecteur Classique/Synthèse. Synthèse reste directement affichée, avec recherches, navigation, textes sélectionnables, copie et ouvertures exactes GET/PUTE et preuves. Les fenêtres de traces brutes restent disponibles. Consignes et README actualisés. Les pilotes qui sélectionnaient l'ancien panneau utilisent désormais les champs Synthèse ; un contrôle vérifie explicitement l'absence des anciens widgets.
+
+Commandes et résultats réellement exécutés :
+
+- `py -3.13 -B tools/check_summary.py` : réussi sur bureau Windows privé, sélection/copie, ouvertures exactes, thèmes et pagination de 45 lots. Les premiers essais ont révélé des attentes anciennes du pilote (libellés de comparaison et sélection du mauvais widget), corrigées avant le passage réussi.
+- `py -3.13 -B tools/check_adjacent_options.py` : réussi sur bureau privé, navigation, alertes GET/IDPK, copie, ouvertures des preuves et réponses dépassées. Captures `.benchmark/get_summary_Clair_20261020.png` et `get_summary_Sombre_20261020.png` inspectées : cartes lisibles et boutons de choix du rendu absents.
+- `py -3.13 -B -m unittest tests.test_summary_view -v` : 4 tests réussis.
+- Compilation en mémoire via `py -3.13 -B -c` et `compile()` : 32 fichiers (modules actifs concernés et outils), réussie après correction de trois imports mal indentés dans les pilotes adaptés. Aucun `.pyc` écrit.
+- Lectures et recherches `rg`, état Git, `git -c core.whitespace=cr-at-eol diff --check` : vérification des espaces réussie, avertissement LF/CRLF préexistant sur `trace_parser.py`. Un glob PowerShell `README*` passé à `rg` a été remplacé par le chemin explicite. Les substitutions documentaires accentuées via pipe PowerShell ont été reprises avec encodage sûr.
+
+Limites : les autres grands pilotes adaptés n'ont pas été relancés ; aucune validation exhaustive revendiquée pour ces parcours. Aucun changement des services métier, traces sources, bases permanentes, copies historiques, environnements ou builds. Aucun exécutable reconstruit.
+
+## 2026-10-20 — Montrer la prise réussie après un échec GET
+
+Demande : pour R2/701, référence A0117192AC, conserver l'échec mais afficher également la nouvelle ligne GET lorsqu'elle réussit. Cause : la reprise n'était reconnue que si la commande GET répétait explicitement référence/SN/lot/ID ; les vrais GET ne portent pas ces champs. De plus, les rendus ne montraient que la première commande et la liste de réponses, sans insérer les commandes de reprise.
+
+Preuve locale en lecture seule : dans TracOMEGA.txt R2, le contexte `ChargeBoitesDansGripperMB` donne IDb 142509 pour A0117192AC avant le GET de 11:16:58.1, échoué -7, puis avant le GET de 11:22:39.6, suivi de OK. Aucun nouveau ticket de cette référence entre les deux. Les opérations REF/RESET/EMPTY intermédiaires ne sont pas des réussites de GET.
+
+Livré : reconnaissance dans `trace_parser.py` du contexte de chargement d'une boîte unique avec IDb/référence. Le diagnostic peut rattacher une reprise au ticket initial si les deux prises ont ce même identifiant interne et cette même référence dans la même génération. Un nouveau ticket de cette référence ou un dépôt confirmé invalide cette association ; autre IDb et GET sans preuve restent exclus. La fenêtre de réponse s'arrête toujours à chaque commande GRIPPER. Synthèse et Classique affichent chronologiquement les commandes de toutes les tentatives avec leurs réponses propres : échec conservé en orange, nouveau GET réussi et son OK en bleu. Statut « GET échoué puis réussi », alerte orange conservée dans les voisins. GET directement réussi toujours compact comme demandé ; PUTE et règles IDPK inchangés. Consignes actualisées.
+
+Vérifications réellement exécutées : consultation du journal/consignes, `Get-Content -Encoding utf8`, `rg` et lecture ponctuelle des traces locales par `py -3.13 -B -c` avec `read_trace()`. `py -3.13 -B -m unittest tests.test_get_diagnostics -v` : 9 cas, 8 réussis dont le nouveau cas réel 701 et le test de reprise par IDb après REF, rejet d'une autre boîte et invalidation sur nouveau ticket. L'ancien cas réel 1052 attendait encore un échec définitif : la nouvelle analyse identifie aussi sa reprise avec IDb 142243 aux GET de 13:37:18.9 puis 13:46:34.4. Vérification des deux contextes locaux, attentes adaptées à cette preuve ; reprise ciblée de `test_local_reported_case_read_only` réussie. Toutes les indexations de test sont sur copies et bases temporaires.
+
+`py -3.13 -B tools/check_adjacent_options.py` : dernier passage réussi sur bureau Windows privé. Nouveau scénario avec échec, REF et nouvelle prise réussie de la même boîte : statut conservé orange, présence des deux commandes et du OK, pixels bleus de la reprise en Clair/Sombre, vrai double-clic vers sa ligne originale exacte ; rendu Classique de la seconde commande vérifié. Les contrôles existants d'échec seul, de GET directement réussi compact, de rouge IDPK, copie et réponses dépassées restent réussis. Captures `.benchmark/get_retry_Clair_20261020.png` et `get_retry_Sombre_20261020.png` produites sur données synthétiques ; capture claire inspectée montrant les deux tentatives et le résultat final. Le dernier passage corrige également l'heure du PUTE synthétique pour qu'elle soit postérieure à la reprise. Syntaxe en mémoire par `py -3.13 -B -c` et `compile()` sur six fichiers concernés : réussie. `git -c core.whitespace=cr-at-eol diff --check` réussi, avertissement LF/CRLF préexistant de `trace_parser.py` uniquement.
+
+Limites : sans preuve d'identité commune, une nouvelle tentative de même référence seule ne constitue toujours pas une reprise confirmée. Pas de nouvelle association IDPK aux GET sans ticket, de migration d'index, de test sur le bureau utilisateur, d'écriture dans les traces/bases réelles ou de reconstruction d'exécutable.
+
+## 2026-10-20 — IDs adjacents : réglages manuels uniquement
+
+Demande : enlever les boutons 5/5, 5/10 et 5/30 en conservant la saisie manuelle. Boutons, callback et adaptation de leur style supprimés ; Avant/Après, Appliquer, Entrée et Copier conservés. Valeurs initiales 5/5, validation 0–1 000 et mémorisation de session inchangées. Consignes et pilotes utilisant les anciens boutons adaptés aux commandes manuelles.
+
+Vérifications exécutées : consultation des consignes/journal et recherches `Get-Content -Encoding utf8`/`rg`. `py -3.13 -B tools/check_adjacent_options.py` réussi sur bureau Windows privé, désormais par saisie manuelle et bouton Appliquer : valeurs, limites, conservation des réglages à la réouverture, tableaux, copie, couleurs et réponses dépassées. Le pilote de présentation a été adapté mais non relancé. `git -c core.whitespace=cr-at-eol diff --check` réussi. Aucun build reconstruit.
+
+## 2026-10-20 — Voisins précédents conservés au passage d'une archive à l'autre
+
+Demande : corriger les lignes précédentes vides après navigation 444 → 445 → 446 → 511. Cause : `_collect_adjacent()` complétait les suivants en traversant les archives liées, mais cherchait les précédents uniquement dans le fichier sélectionné. Le ticket 511 ouvre TracOmega006.old ; les tickets antérieurs sont dans TracOmega005.old.
+
+Livré : `paired_adjacent()` remonte les liens existants dans l'autre sens pour compléter le nombre de précédents demandé, avec déduplication des IDs à chaque archive. Chronologie d'affichage, chemins/générations et lignes conservés. Arrêt si aucun prédécesseur, plusieurs prédécesseurs, boucle ou autre robot/emplacement. Aucun lien inventé, aucune recherche par seul basename. Extension réservée au service actif R1/R2 ; l'ancienne API `adjacent()` garde sa limite historique au fichier pour les précédents. Consignes et contrôles ciblés actualisés.
+
+Vérifications réellement exécutées : lecture des consignes/journal, `Get-Content -Encoding utf8`, recherches `rg` et contrôle en lecture seule des en-têtes locaux 005/006. Nouveau test `test_click_first_ticket_of_next_archive_keeps_five_previous` exécuté avant correction : échec reproduit avec zéro précédent au lieu de cinq. `py -3.13 -B -m unittest tests.test_paired_adjacent -v` après correction : **10 réussis**, dont nouveau scénario et maintien de l'API historique. Deux cas ajoutés ensuite, exécutés seulement de façon ciblée : chaîne de plusieurs archives avec ID répété, réussi ; extraits locaux 005/006 indexés dans des copies et bases temporaires, premier essai limité aux 40 dernières lignes portant des champs ne contenait que trois IDs distincts. Échantillon corrigé pour inclure les IDs 439–446 et 511–516 ; reprise de `test_local_005_006_boundary_read_only` réussie, cinq précédents dont les trois derniers 444/445/446 depuis 005 avant 511 dans 006. Une commande ponctuelle de diagnostic n'a inspecté que les métadonnées/liens de cette base temporaire.
+
+`py -3.13 -B tools/check_paired_adjacent.py` : dernier passage réussi sur bureau Windows privé. Nouveau scénario avec vrais clics successifs 444/445/446/511, cinq précédents et cinq suivants, sélection exacte de la génération 006 et compteur « 5 précédents / 5 demandés ». Contrôles existants liés au recalage, copie, archive supprimée, liens GET et réponses dépassées également réussis. Premier essai : assertion ancienne sur cinq colonnes alors qu'État est désormais présente, adaptée aux colonnes métier ; une erreur d'indentation introduite pendant cette adaptation a été corrigée avant le dernier passage. Syntaxe en mémoire via `py -3.13 -B -c` et `compile()` sur trois fichiers concernés : réussie. `git -c core.whitespace=cr-at-eol diff --check` réussi (avertissement LF/CRLF préexistant de `trace_parser.py`).
+
+Limites : une archive absente ou une liaison ambiguë ne permet pas de compléter les voisins ; l'application ne choisit pas arbitrairement. Les tests réels utilisent uniquement des copies temporaires en lecture des traces fournies ; aucun accès en écriture au cache réel, aucun contrôle sur le bureau utilisateur, aucune suite générale et aucun build reconstruits. Pas de capture nouvelle revendiquée pour cette correction ; les assertions portent sur les clics, identités et résultats effectivement affichés.
+
+## 2026-10-20 — Flèches du parcours et titre ModBusId centré
+
+Demandes : ajouter une flèche verte entre les étapes de convoyage et centrer le titre ModBusId du détail. Ajout de petites flèches descendantes alignées sur les points de la chronologie, uniquement entre deux étapes ; aucune flèche finale. Réutilisation des lignes existantes et de la couleur positive des thèmes Clair/Sombre. Le vert indique ici l'enchaînement visuel, sans modifier les états métier des étapes. Titre centré dans toute la largeur de l'en-tête, commande Copier chemin conservée à droite. Aucun service ni règle de détection modifiés.
+
+Vérifications réellement exécutées : lecture des consignes/journal et sections concernées par `Get-Content -Encoding utf8` et `rg`. `py -3.13 -B tools/check_convoyage_workspace.py` : dernier passage réussi sur bureau privé, avec nouvelles assertions nombre de flèches = étapes moins une, absence de flèche finale, pixels verts et centrage géométrique du titre. Le premier passage contrôlait les pixels du conteneur CTk de la flèche et échouait ; capture reprise sur le label natif, flèche inspectée, puis contrôle réussi. Le scénario à 1 090 × 820 conserve sept anomalies et au moins cinq étapes courtes entièrement visibles, sans déplacer de séparation ; navigation, thèmes, copie de chemin, fenêtre étroite et réponses dépassées restent contrôlés. Captures privées parcours sombre, sept anomalies sombre et détail étroit clair inspectées dans `.benchmark/convoyage_workspace_*_20261020.png`, ainsi que la capture native de la flèche. Syntaxe en mémoire par `py -3.13 -B -c` et `compile()` des deux fichiers concernés : réussie. `git -c core.whitespace=cr-at-eol diff --check` réussi (avertissement LF/CRLF préexistant de `trace_parser.py`).
+
+Limites : les flèches ajoutent une petite hauteur entre étapes ; les longs parcours restent défilants. Aucun contrôle graphique sur le bureau utilisateur, aucune modification des traces/bases réelles et aucun build reconstruit.
+
+## 2026-10-20 — GET réussi : affichage compact historique
+
+Demande : conserver l'affichage d'avant lorsqu'un GET réussit. Suppression du libellé « GET réussi » et des réponses OK dans Synthèse et Classique ; seule la ligne GET bleue reste affichée. L'échec, la reprise après échec et le résultat inconnu gardent leurs diagnostics. Aucun changement de détection, du PUTE ou de la colonne État des voisins.
+
+Vérifications : consignes et journal consultés par `Get-Content -Encoding utf8`, lecture des rendus concernés. `py -3.13 -B tools/check_adjacent_options.py` : réussi sur bureau Windows privé, nouveau cas GET réussi avec absence de statut/réponse supplémentaire en Synthèse et Classique ; les contrôles orange/rouge et ouvertures exactes des erreurs restent réussis. `git -c core.whitespace=cr-at-eol diff --check` réussi. Aucun test sur le bureau utilisateur ni build reconstruit.
+
+## 2026-10-20 — Échecs GET visibles et PUTE de référence conservé
+
+Demande : signaler les GET échoués dans la recherche et les IDs adjacents, avec orange distinct du rouge IDPK. Précision reçue pendant l'intervention : conserver finalement le PUTE affiché selon sa règle historique, car le dépôt ultérieur de la référence reste utile même sans certitude sur son rattachement au ticket. Cette précision remplace le volet du plan initial qui prévoyait de masquer les PUTE non rattachables.
+
+Cause confirmée en lecture de `traces/trace r2/TracOmega029.old` : le ticket 1052 / A0110543AC / SN 343132 / lot 261012.095 a un GET le 13/10 à 13:37:18.9, suivi de `rep ='Err NOK (-32092)'` puis `Err: reponse gripper GET`. La présence d'une ligne GET était seulement affichée en bleu, sans examiner sa réponse. Le PUTE de 13:46:49.6 provient de la recherche historique du prochain dépôt de cette référence ; son affichage reste volontairement conservé.
+
+Livré :
+
+- Parseur des réponses Tgripper et erreurs GET explicites, accentuées ou historiques. Service `get_for_occurrence(path, number, cancel=None)` commun aux détails et voisins via `get_diagnostics.py`. Analyse des lignes indexées par blocs de 1 000, un parcours par fichier/génération et cache borné identifié par `content_revision`. Aucune lecture de trace source depuis les actions, aucun changement de schéma ni de l'historique permanent.
+- Réponse rattachée à la commande précédente, arrêt à toute nouvelle commande GRIPPER, y compris REF/EMPTY/IDENTIFYPACK. Un OK d'une autre opération ne valide pas le GET. Sans réponse : résultat inconnu ; sans GET du ticket : absence explicite. Les tickets sont consommés, un GET sans nouveau ticket n'hérite pas de son SN/lot. Une reprise est confirmée uniquement si son GET porte explicitement la même identité complète référence/SN/lot/ID ; « GET échoué puis réussi » garde l'alerte.
+- Synthèse : carte GET orange avec message/code et réponses originales sélectionnables, ouvrables par double-clic. Classique : même diagnostic et preuves à côté du GET, présentation claire historique préservée. Diagnostics publiés après vérification complète des sources, avec rafraîchissement à sa fin et protections existantes contre les réponses dépassées.
+- Voisins : colonne État compacte (échec, reprise, réussite, inconnu, absence), texte orange pour échec GET seul et rouge conservé pour IDPK. Si les deux alertes coexistent : état « IDPK + échec GET », ligne rouge et détail GET orange distinct sous les tableaux. Fonds du repère et styles complets par ligne conservés ; légende mise à jour. Ajustement des largeurs après inspection pour éviter les libellés d'état tronqués à la taille habituelle.
+- **PUTE inchangé selon la précision utilisateur** : prochain dépôt de cette référence après GET affiché même en cas d'échec ; il ne constitue pas une preuve de réussite du GET. Derniers emplacements par lot et comparaison IDPK inchangés. Consignes et pilote ciblé mis à jour.
+
+Commandes et vérifications réellement exécutées :
+
+- Lectures `Get-Content -Encoding utf8`, recherches `rg`, `git diff --stat` et analyse en lecture seule du cas local via `py -3.13 -B -c` utilisant `read_trace()`. Plusieurs essais d'`apply_patch` n'ont pas trouvé un commentaire attendu dans le pilote ; patchs repris avec un contexte plus court, sans changement de comportement lié à ces refus.
+- `py -3.13 -B -m unittest tests.test_get_diagnostics -v` : 7 cas, 5 réussis et 2 échecs initiaux. Le pilote sélectionnait une ancienne génération à égalité de date après sa seconde publication ; sélection de la génération présente corrigée. L'annulation n'était pas contrôlée lorsque le résultat venait du cache ; contrôle ajouté avant retour. Reprise ciblée des deux cas `test_confirmed_retry_keeps_failure_but_plain_get_cannot_inherit` et `test_revision_cache_deleted_generations_and_cancellation` : 2 réussis. Couverture : échec et preuves, succès, absence de GET/réponse, erreur deltaW non interprétée comme réponse, reprises explicites ou ambiguës, ID réutilisé, fenêtres REF/EMPTY, cache, annulation et générations supprimées.
+- `py -3.13 -B -m unittest tests.test_occurrence_comparison.ExactComparisonTests tests.test_summary_view tests.test_paired_adjacent -q` : **25 réussis en 1,730 s**. Puis les deux cas ciblés de détails/GET de `tests.test_trace_store.StoreTests` et `tests.test_lot_locations` : **5 réussis en 0,387 s**. Pas de reprise des suites déjà réussies sans changement les concernant.
+- Après la précision sur PUTE, reprises ciblées de `test_failed_get_does_not_claim_later_deposit_and_keeps_proofs` et `test_local_reported_case_read_only` : réussies. Le second vérifie le diagnostic -32092 et le maintien exact du PUTE de 13:46:49.6 dans les détails de l'extrait réel copié temporairement.
+- `py -3.13 -B tools/check_adjacent_options.py` : dernier passage **réussi sur bureau Windows privé**, après conservation du PUTE. Vrais clics R2/1052 depuis les voisins vers la sélection principale, GET orange sans rouge IDPK, combinaison rouge IDPK + GET R1/1054, pixels de texte dans les deux thèmes, maintien des tableaux/repères et réglages, copie, archives supprimées, vérification différée et réponses dépassées. Doubles-clics sur la réponse d'erreur en Synthèse puis Classique : trace intégrale et ligne originale surlignée vérifiées. Le premier essai du double-clic Classique n'activait pas le tag Tk faute de mouvement de souris ; génération de Motion avant les clics ajoutée, puis contrôle réussi. La suite n'a pas été élargie aux anciens grands parcours.
+- Captures privées `.benchmark/get_neighbors_Clair_20261020.png`, `get_neighbors_Sombre_20261020.png`, `get_summary_Clair_20261020.png`, `get_summary_Sombre_20261020.png` inspectées : état compact lisible, orange/rouge distincts et preuves visibles. Capture Synthèse claire finale réinspectée après conservation du PUTE. Les captures utilisent des données synthétiques ; la preuve du cas réel est le contrôle de service en copie temporaire.
+- Imports Python réussis. Syntaxe en mémoire par `py -3.13 -B -c` et `compile()` sur huit fichiers concernés : réussie sans bytecode. `git -c core.whitespace=cr-at-eol diff --check` réussi ; avertissement de conversion LF/CRLF de `trace_parser.py` uniquement.
+
+Limites : seuls les formats de réponses explicites reconnus permettent d'affirmer un échec ou une réussite. Les reprises sans identité complète restent non attribuées ; absence de réponse et absence de GET ne deviennent pas des alertes inventées. Le PUTE de référence conservé ne garantit pas qu'il s'agit de la boîte du ticket sélectionné. Pas de benchmark sur toute la collection réelle ni de tests graphiques sur le bureau utilisateur. Sources locales et bases réelles non modifiées ; aucun build reconstruit.
+
+## 2026-10-20 — Suivi avec Référence, SN ou CodeLot indépendants
+
+Demande : autoriser chaque critère seul, toutes les paires et les trois ensemble ; afficher trois champs permanents et ajouter l'identité aux résultats. Cause du blocage précédent : l'interface ne lançait rien lorsque la référence était vide, les filtres dépendaient du panneau Filtres et le service imposait une référence dans sa requête SQL.
+
+Livré : formulaire propre au suivi avec Référence/SN/CodeLot toujours visibles, Rechercher et Entrée sur chaque champ. Barre Recherche masquée dans cette section, saisies indépendantes et conservées pendant les changements de page. À moins de 700 px disponibles, formulaire sur deux rangées. Les sept combinaisons non vides fonctionnent par valeurs complètes avec ET et retrait des espaces extérieurs. Sans critère : message explicite et aucune requête globale. Les reprises utilisent les critères validés, même sans référence ; les champs modifiés seuls ne changent pas les résultats. Ctrl+F cible la référence du suivi. Échec de chargement signalé avec possibilité de relancer.
+
+`TraceStore.tracking(reference=None, sn=None, lot=None, cancel=None)` recherche les références candidates via les tickets SN/lot ou le lot indexé des dépôts, puis rattache ticket/GET/PUTE séparément par référence et fichier/génération. Ticket consommé au GET ; aucune identité héritée par un GET sans nouveau ticket ou par un PUTE suivant sans nouveau GET. Lot du ticket prioritaire, puis lot indexé du dépôt ; identité inconnue représentée par un tiret et exclue d'un filtre SN. Résultats enrichis en Référence/SN/CodeLot, conservant texte original, numéro et TraceRef. Ajout des trois colonnes au tableau et de l'identité sélectionnable/copiable dans le détail. Tri récent en premier, copie, compteur de générations, navigation exacte et insertion par groupes de 200 conservés. Requêtes exécutées dans l'instantané existant du worker, références traitées par groupes de 200, annulation consultée pendant l'association ; aucun changement de schéma ni réindexation requise. Fermeture du suivi : annulation des insertions avant destruction de ses enfants. Consignes et pilote historique d'harmonisation adaptés au bouton propre au suivi.
+
+Vérifications et commandes réellement exécutées :
+
+- Exploration par `Get-Content -Encoding utf8` et `rg` des instructions, journal, formulaire, services, rendu et pilotes ; `git status --short`, `git diff --numstat` et contrôle des usages de `tracking_values()`.
+- `py -3.13 -B -m unittest tests.test_tracking_view -v` : **6 réussis en 0,248 s**. Sept combinaisons sur plusieurs références et identités partagées, préfixes rejetés, espaces extérieurs, critères tous vides sans SQL, références entrelacées avec ID réutilisé, GET sans ticket et ticket futur non hérité, générations distinctes conservées après écrasement/suppression, lot indexé sans ticket, fraction de seconde et positions métier.
+- `py -3.13 -B tools/check_tracking.py` : dernier passage **réussi sur bureau Windows privé**. Vrais boutons et Entrée depuis chacun des champs, sept combinaisons et SN/lot seuls, absence de requête sans critères, isolation des saisies de Recherche, reprise sans référence avec saisie non validée, réponse retardée dépassée, erreur/reprise, champs visibles et disposition étroite, huit colonnes, copie de ligne/cellule et fragment de SN, double-clic exact vers archive supprimée, texte et surlignage originaux, thème, états vides et annulation des insertions. Les premiers essais ont révélé une assertion de pilote incorrecte (un panneau caché par superposition reste techniquement mappé) et l'absence de repli du formulaire : `CTkFrame.bind()` recevait le Configure du canvas interne, rejeté par le contrôle d'identité. Assertion corrigée et binding natif sur le conteneur avec `tk.Misc.bind()` ; derniers passages réussis après ajout des vérifications d'erreur et de copie du SN.
+- Captures `.benchmark/tracking_criteria_Clair_20261020.png` et `.benchmark/tracking_criteria_Sombre_20261020.png` inspectées : trois champs lisibles, résultat SN seul, colonnes et identité dans le détail, repli sur deux rangées dans la fenêtre étroite (largeur minimale réelle de l'application 860 px). Le tableau conserve son défilement horizontal lorsque toutes les colonnes ne tiennent pas.
+- Syntaxe en mémoire par `py -3.13 -B -c` et `compile()` sur sept fichiers concernés : réussie sans bytecode. `git -c core.whitespace=cr-at-eol diff --check` : réussi.
+
+Limites : le suivi reste celui des dépôts PUTE ; un ticket sans dépôt n'est pas un résultat de suivi. Les SN absents ne sont pas reconstitués arbitrairement. Pas de benchmark de volumétrie réelle, de suite générale ou de relance des autres grands pilotes ; le pilote d'harmonisation a été adapté mais non exécuté. Aucun lancement sur le bureau utilisateur, aucune modification des traces/bases permanentes/environnements/copies historiques et aucun build reconstruit.
+
+## 2026-10-20 — Navigation simplifiée et filtres du suivi référence
+
+Demande : retirer Ouvrir trace de la barre principale et le radio Texte, ordonner Recherche / Convoyage / Suivi référence et ajouter les critères SN/CodeLot au suivi tout en gardant son tableau de dépôts.
+
+Livré : commandes retirées, texte indicatif adapté, ordre du menu modifié. Filtres accessibles dans Suivi référence via le même panneau de saisie réutilisé, avec valeurs et état ouvert/fermé indépendants de Recherche. Rechercher ou Entrée valide référence et filtres optionnels exacts ; les deux critères se combinent. Le titre indique les critères appliqués. Les retours après interruption ou modification de l'index utilisent le dernier suivi validé, sans appliquer les champs modifiés entre-temps. `TraceStore.tracking(reference, sn=None, lot=None, cancel=None)` conserve tous les PUTE sans filtre ; avec critères, le SN vient du ticket consommé par le GET précédent dans le même fichier/génération, sans hériter d'un ticket après un GET sans nouveau ticket. Le lot connu du ticket est prioritaire, avec lot indexé du dépôt en l'absence de celui du ticket. Pas de lecture intégrale des fichiers ni de modification du schéma. Tri récent en premier, table, copie, ouvertures exactes et insertion par lots conservés. Anciens pilotes référençant le bouton supprimé adaptés ; l'harmonisation ouvre désormais par double-clic GET existant. Consignes mises à jour.
+
+Vérifications réellement exécutées :
+
+- Exploration par `Get-Content -Encoding utf8` et `rg` des instructions, journal, navigation, suivi, services, analyse des tickets et tests ; revue `git diff`.
+- `py -3.13 -B -m unittest tests.test_tracking_view -v` : 3 réussis, dont nouveau cas SN et lot exacts, préfixes rejetés, combinaison incompatible vide et GET sans ticket sans héritage. Après ajout de l'appel dans un instantané existant et du lot seul, reprise de `py -3.13 -B -m unittest tests.test_tracking_view.TrackingValuesTests.test_tracking_filters_exact_ticket_identity_and_missing_get_ticket -v` : réussie.
+- `py -3.13 -B tools/check_tracking.py` : premier essai en échec, car le nouveau service ouvrait un instantané dans celui déjà installé par le worker (`cannot start a transaction within a transaction`). Réutilisation de l'instantané existant, puis contrôle réussi. Dernier passage après extension du pilote : réussi sur bureau Windows privé, vrais boutons et Entrée depuis SN, filtres combinés et résultat vide, isolation des formulaires, ordre des menus et absence des commandes retirées, reprise des critères validés malgré saisie non validée, tableau/copie, vrais doubles-clics vers archive supprimée et ligne exacte, thème et annulation des insertions. Données et caches temporaires uniquement.
+- Capture `.benchmark/tracking_filters_20261020.png` inspectée : ordre du menu, bouton Filtres, champs et critères appliqués lisibles au-dessus du tableau ; trois dépôts et leur détail conservés. Pas de changement visuel revendiqué pour les autres vues.
+- Syntaxe en mémoire via `py -3.13 -B -c` et `compile()` sur sept fichiers concernés : réussie. `git diff --check` initial a signalé les fins de ligne CRLF de `search_gui.py` comme espaces finaux ; `git -c core.whitespace=cr-at-eol diff --check` réussi avec prise en compte de ce format Windows.
+
+Limites : en l'absence de ticket rattachable, un dépôt ne correspond pas à un filtre SN ; aucune identité n'est inventée. Pas de nouvelle mesure de performance ni de validation graphique exhaustive des échelles Windows. Les pilotes généraux interactions/harmonisation ont été adaptés mais non exécutés, conformément aux vérifications ciblées. Traces et bases réelles, environnements, copies historiques et builds inchangés ; aucun exécutable reconstruit.
+
+## 2026-10-20 — Formulation du titre précisée : prise sur T5
+
+Demande : remplacer l'explication par « Boîte proposée au robot mais jamais prise sur T5 ». Texte du titre mis à jour sans changement de détection. Consignes et journal consultés par `Get-Content`, emplacement vérifié par `rg`. `git diff --check` réussi. Aucun contrôle graphique exécuté pour ce remplacement de texte, aucun build reconstruit.
+
+## 2026-10-20 — Explication à côté du titre Erreurs robot
+
+Demande : ajouter « Boîte proposée en théorie au robot mais jamais prise par celui-ci » à côté d'Erreurs robot. Ajout dans le titre de la vue avec retour à la ligne adapté à la largeur disponible ; compteur et détail conservés. Aucun défaut métier corrigé ni règle de détection modifiée.
+
+Vérifications exécutées : lecture de `AGENTS.md`, du début de `CHANGELOG.md`, de `robot_errors_view.py` et de l'en-tête partagé par `Get-Content -Encoding utf8`. Syntaxe en mémoire via `py -3.13 -B -c` et `compile()` : réussie. `git diff --check` réussi. Pas de contrôle graphique exécuté pour cet ajout de texte ; rendu et retour à la ligne non validés visuellement. Aucun build reconstruit.
+
+## 2026-10-20 — Callback Convoyage pendant destruction des libellés
+
+Demande : corriger `TclError: invalid command name` visant le label de statut du workspace Convoyage. Cause reproduite : la fermeture était signalée uniquement dans `<Destroy>` du conteneur, après destruction de ses enfants. Un événement Configure reçu dans cet intervalle tentait encore de reconfigurer le label natif déjà détruit.
+
+Livré : arrêt idempotent des tâches et du timer dès l'entrée dans `destroy()`, avant destruction des enfants. Le gestionnaire Configure ignore les événements après fermeture et ceux qui ne concernent pas le workspace. Chargements, retours asynchrones et recoloration ignorent également une page fermée ; le drain ne reprogramme aucun timer si la page vient de fermer. Le gestionnaire Destroy conserve son rôle de secours. Aucun masquage général de TclError.
+
+Vérifications réellement exécutées : lecture des consignes et du journal, `Get-Content -Encoding utf8`, `rg` et `git diff` sur cycle de vie, tâches et gestion des vues. Nouveau pilote `py -3.13 -B tools/check_convoyage_lifecycle.py`, exclusivement sur bureau Windows privé : échec avant correction avec le même suffixe de chemin `.!convoyageworkspace.!ctkframe3.!ctkframe.!ctklabel.!label`, puis réussite après correction. Fermeture par vrai bouton, événement Configure délivré pendant destruction du label enfant, tâche retardée relâchée après fermeture, absence d'exception et de livraison tardive vérifiées. `py -3.13 -B tools/check_convoyage_workspace.py` : réussi, navigation, recherches, modes étroits, erreurs/reprise, réponses dépassées et fermeture pendant chargement sur traces/cache temporaires. Syntaxe en mémoire par `py -3.13 -B -c` et `compile()` des deux fichiers concernés : réussie ; `git diff --check` réussi.
+
+Limites : le traceback fourni était partiel ; la reproduction identifie et corrige cette fenêtre de destruction, sans établir le geste initial exact sur le poste utilisateur. Aucun test sur son bureau, aucune modification des traces ou bases réelles, aucune suite générale et aucun build exécutés.
+
+## 2026-10-20 — Ignorer les copies MODBUS du dossier R2
+
+Demande : charger les fichiers MODBUS de R1 et ignorer ceux rangés dans R2. Cause : la découverte parcourait tous les dossiers sans distinguer les copies MODBUS de R2 ; elles pouvaient donc alimenter les recherches et le convoyage.
+
+Livré : filtrage central dans `trace_sources.py` pour TracMODBUS sous R2/trace r2, sans distinction de casse, sous-dossiers et archives inclus. Les OMEGA R2 restent chargées ; MODBUS sous R1 et les fichiers sans dossier robot (notamment Apoteka) restent acceptés. Les fichiers retenus gardent leur badge R1/R2 et leurs checkpoints propres. À l'ouverture du TraceStore actif avec `directories=`, suppression transactionnelle des anciennes copies MODBUS R2 du seul cache, avant publication ; index FTS et révision suivent les déclencheurs existants. Aucun effacement de fichier source ni modification de l'historique OMEGA. Consignes mises à jour ; fixtures de sources et des deux pilotes de convoyage adaptées pour garder des fichiers homonymes autorisés et des checkpoints R1 comme R2.
+
+Commandes réellement exécutées : lectures `Get-Content -Encoding utf8`, recherches `rg` dans sources/services/tests et `git diff --check`. `py -3.13 -B -m unittest tests.test_trace_sources tests.test_source_choice -v` : 28 tests, 26 réussis et deux échecs de fixtures. Le nouveau test créait R2 et r2 comme deux chemins distincts sur Windows alors qu'ils désignent le même dossier ; l'ancien test de chemins exacts exigeait une copie désormais interdite sous R2. Fixtures corrigées (homonymes R1 de deux sources). Reprise ciblée par `py -3.13 -B -m unittest tests.test_trace_sources.TraceSourcesTests.test_r2_modbus_is_ignored_in_all_roots_and_nested_folders tests.test_trace_sources.TraceSourcesTests.test_convoyage_detail_uses_full_path -v` : deux réussis. Le test de cache préexistant était déjà réussi lors du premier passage : MODBUS R2 absent des recherches dès ouverture active, MODBUS R1 et OMEGA R2 conservés, fichier source toujours présent. Syntaxe en mémoire par `py -3.13 -B -c` et `compile()` sur six fichiers concernés : réussie. `git diff --check` réussi.
+
+Limites : aucune synchronisation du cache réel ni relance de l'application utilisateur pendant cette intervention ; le nouveau filtrage sera appliqué par la version Python au prochain démarrage. Les pilotes graphiques ont seulement leurs fixtures adaptées, sans exécution, car aucun comportement graphique n'a changé. Pas de suite générale, de modification des traces fournies ou de reconstruction d'exécutable.
+
+## 2026-10-20 — Listing partagé sans chemin et repère visuel vert
+
+Demande : alléger le texte copié des IDs adjacents en supprimant le chemin de trace et remplacer le libellé Repère par une flèche avec marqueur vert. Le format précédent ajoutait le libellé compact du fichier à la date et un préfixe textuel peu visible.
+
+Livré : en-têtes R1/R2 avec date seule, sans fichier ni provenance de trace ; ligne centrale préfixée par « 🟢 ➜ ». Les autres colonnes et occurrences restent conservées. Consignes et assertions des contrôles adaptées ; aucun changement de navigation ou de présentation des tableaux.
+
+Vérifications réellement exécutées : lecture de `AGENTS.md`, du début de `CHANGELOG.md` et des fichiers concernés par `Get-Content -Encoding utf8` et `rg` ; `py -3.13 -B -m unittest tests.test_adjacent_listing -v` : 3 tests réussis, dont absence de nom/chemin et de libellé Repère, présence du marqueur vert, champs complets et répétitions ; `git diff --check` réussi. Le contrôle graphique existant a été adapté mais non relancé pour ce seul changement de texte.
+
+Limites : le presse-papiers reste du texte brut ; le marqueur est vert via l'emoji, la ligne elle-même ne peut pas imposer une couleur dans WhatsApp. Aucun collage WhatsApp effectué, aucun build reconstruit.
+
+## 2026-10-20 — Convoyage compact et partage texte des IDs adjacents
+
+Demande : rendre le cheminement et la liste des anomalies lisibles à la taille des captures, sans agrandir la fenêtre ni déplacer une séparation verticale ; ajouter une copie texte R1/R2 destinée à WhatsApp, avec toutes les colonnes.
+
+Causes : le seuil de 900 px s'appliquait à la largeur disponible après la barre latérale ; il empilait donc les panneaux même dans une fenêtre de 1 090 px. Les cartes de 76 px, les grandes marges et les étapes sur deux lignes occupaient l'essentiel de la hauteur. Un fichier unique conservait un panneau de liste entier.
+
+Livré : onglets conservés, commandes et résumés compacts. Anomalies : lignes virtualisées de 48 px logiques, largeur initiale de liste 240 px, détail à droite dès 760 px disponibles. Sous ce seuil, une seule zone avec Retour à la liste ; rouvrir la sélection courante ne relance aucune requête. Parcours : détail sur toute la largeur, sélecteur de fichiers seulement si plusieurs correspondent. Étapes heure/checkpoint/état sur une ligne avec retour des descriptions longues. Styles compacts limités au mode intégré ; popups historiques conservées. Les services, chemins exacts, traitements asynchrones et règles MODBUS restent inchangés.
+
+IDs adjacents : icône Copier à droite d'Appliquer, infobulle et confirmation. Export du résultat publié complet, y compris hors écran, R1 puis R2, date/provenance courte et heure/ID/référence/SN/lot. Repères centraux, répétitions et valeurs complètes conservés ; valeurs absentes représentées par un tiret. Rapprochements indisponibles ou ambigus explicités sans exporter les candidats comme voisins. Aucune requête pour copier ; bouton désactivé pendant actualisation ou sans occurrence. Consignes AGENTS.md actualisées. Entrée documentaire préexistante conservée.
+
+Commandes et vérifications réellement exécutées :
+
+- Exploration en lecture par `Get-Content -Encoding utf8`, `rg`, `git status --short`, `git diff --stat`, `git diff --numstat` et `git diff`. Une recherche initiale avec glob Windows `*.py` a échoué ; reprise avec `rg -g '*.py'`.
+- `py -3.13 -B tools/check_convoyage_workspace.py` : dernier passage réussi sur bureau Windows privé. Boutons, Entrée, sélection des fichiers, clics cartes, chemins homonymes, attente de vérification, conservation des onglets et défilements, erreurs/reprise, réponses dépassées, publication et fermeture. Régression ajoutée à 1 090 × 820 : sept anomalies simultanées et au moins cinq étapes courtes entièrement visibles ; le cas capturé en montre six. Fichier unique pleine largeur, sélection multiple, mode étroit et retour sur la ligne courante sans requête contrôlés. Les premiers passages ont révélé deux erreurs du pilote (comparaison des objets Tcl de panneaux à des chaînes ; sélection modifiée par les nouveaux scénarios avant les assertions historiques), corrigées. La revue a aussi identifié puis corrigé la réouverture de la ligne courante après Retour à la liste.
+- `py -3.13 -B tools/check_adjacent_options.py` : dernier passage réussi sur bureau privé. Bouton réel et contenu du presse-papiers contrôlés, toutes les colonnes et repères, plus de 40 occurrences exportées malgré la zone visible réduite, copie désactivée pendant actualisation, infobulle, navigation et couleurs IDPK conservées. Un premier passage a révélé l'absence d'invalidation de la copie dans `loading()`, corrigée. Des caractères accentués introduits par un pipeline PowerShell avaient été remplacés par `?` ; textes et icône corrigés avant le dernier contrôle et l'inspection des captures.
+- `py -3.13 -B -m unittest tests.test_adjacent_listing -v` : 3 tests réussis, valeurs complètes, répétitions, ordre, champs absents, absence de rapprochement, candidats ambigus exclus et résultat vide.
+- Syntaxe par `py -3.13 -B -c` et `compile()` sur les sept fichiers Python concernés : réussie sans bytecode. `git diff --check` : réussi.
+- Captures limitées au bureau privé dans `.benchmark/convoyage_workspace_*_20261020.png` et `.benchmark/adjacent_copy_20261020.png`. Inspection visuelle des captures fichier unique clair, sept anomalies sombre, détail étroit clair et bouton de copie : texte lisible, icône visible, couleurs métier et étapes présentes. Les captures des premiers essais ont été remplacées par les dernières.
+
+Limites : longs parcours et grandes listes restent défilants ; aucune promesse d'afficher un nombre illimité d'étapes. Presse-papiers texte vérifié, mais aucun envoi ni collage dans WhatsApp effectué. Les tests utilisent uniquement données/index temporaires et bureau privé ; pas de test exhaustif de toutes les échelles Windows, de suite générale ou de benchmark. Aucun changement des traces, bases permanentes, environnements, copies historiques ou builds ; aucun exécutable reconstruit.
+
+## 2026-10-20 — Récupération locale de main
+
+Demande : récupérer la dernière version de la branche distante `main`. Cause du décalage : la copie locale était au commit `e93dc94`, deux commits derrière `origin/main`, sans modification locale ni commit divergent.
+
+Commandes réellement exécutées : consultation de `AGENTS.md` et `CHANGELOG.md`, `git status --short --branch`, `git remote -v`, `git fetch origin`, `git log -4 --format="%h %ad %s" --date=iso-strict origin/main`, `git rev-list --left-right --count HEAD...origin/main` (résultat `0 2`), `git diff --stat HEAD..origin/main`, puis `git merge --ff-only origin/main` : avance rapide réussie, 61 fichiers actualisés sans conflit. `git rev-parse HEAD` et `git rev-parse origin/main` confirment le même commit `4f41d46e49da9246347c2a99c720e8b595fac0c1` ; état Git propre après récupération, avant cette entrée documentaire.
+
+La dernière publication distante est datée du 20 octobre 2026 à 09:37 +02:00. Aucun défaut applicatif corrigé dans cette intervention ; aucun test fonctionnel, lancement graphique, benchmark ni build exécuté pour cette seule synchronisation. Les validations et limites des évolutions récupérées restent consignées ci-dessous. Cette entrée reste une modification locale, sans commit ni publication supplémentaire.
+
 ## 2026-10-20 — Publication des évolutions sur GitHub
 
 Demande : pousser le travail local sur GitHub. Préparation : consultation des consignes et du journal, `git status --short`, `git branch --show-current`, `git remote -v`, `git log -3 --oneline`, `git diff --stat`, contrôle des fichiers non suivis et de `.gitignore`. Le dépôt cible est `Superbobopo/search_gui`, branche `main` ; les évolutions précédemment livrées sont regroupées avec leurs nouveaux modules, tests, outils et documentation.

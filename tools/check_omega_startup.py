@@ -16,6 +16,7 @@ import trace_sources as sources
 from trace_parser import read_trace
 from trace_store import TraceStore, Cancelled
 from tools.check_omega_history import descendants
+from tools.summary_test_support import rendered_summary_text, click_summary
 from tools.ui_test_support import run_gui_check
 
 
@@ -81,24 +82,11 @@ def main():
             app.btn_search.invoke()
             pump(lambda: app.selection is not None)
             selected = app.selection
-            app.result_switch._buttons_dict['Classique'].invoke()
-            pump(lambda: app.classic_frame.winfo_ismapped())
             expected = app.store.file_lines(selected.path)
             for index, key in enumerate(('get', 'pute')):
                 event = selected.details[key]
                 old = {w for w in app.winfo_children() if isinstance(w, gui.tk.Toplevel)}
-                position = f"{app.txt.tag_ranges('clickable_' + key)[0]} +1lines +5chars"
-                app.txt.see(position)
-                app.update()
-                box = app.txt.bbox(position)
-                assert box
-                x, y = box[0] + 2, box[1] + 2
-                assert 'clickable_' + key in app.txt.tag_names(f'@{x},{y}')
-                app.txt.event_generate('<Motion>', x=x, y=y)
-                for click in range(2):
-                    stamp = 1000 + index * 1000 + click * 100
-                    app.txt.event_generate('<ButtonPress-1>', x=x, y=y, time=stamp)
-                    app.txt.event_generate('<ButtonRelease-1>', x=x, y=y, time=stamp + 20)
+                click_summary(app, key, stamp=1000+index*1000)
                 def opened():
                     return {w for w in app.winfo_children() if isinstance(w, gui.tk.Toplevel)} - old
                 pump(lambda: bool(opened()))

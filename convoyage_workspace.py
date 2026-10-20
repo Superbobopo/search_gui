@@ -20,14 +20,14 @@ class ConvoyageWorkspace(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
         self.heading = ctk.CTkFrame(self, fg_color='transparent')
-        self.heading.grid(row=0, column=0, sticky='ew', pady=(12, 16))
+        self.heading.grid(row=0, column=0, sticky='ew', pady=(4, 6))
         self.title = ctk.CTkLabel(self.heading, text='Convoyage', font=('Segoe UI', 22, 'bold'))
         self.title.pack(side='left')
         self.badge = ctk.CTkLabel(self.heading, text='MODBUS · R1/R2', corner_radius=6,
                                  font=('Segoe UI', 12, 'bold'), height=26)
         self.badge.pack(side='left', padx=16, ipadx=10)
         self.tabs = ctk.CTkFrame(self, corner_radius=8)
-        self.tabs.grid(row=1, column=0, sticky='w', pady=(0, 16))
+        self.tabs.grid(row=1, column=0, sticky='w', pady=(0, 8))
         self.content = ctk.CTkFrame(self, corner_radius=0, fg_color='transparent')
         self.content.grid(row=2, column=0, sticky='nsew')
         self.content.grid_columnconfigure(0, weight=1)
@@ -42,7 +42,7 @@ class ConvoyageWorkspace(ctk.CTkFrame):
             page.grid_columnconfigure(0, weight=1)
             page.grid_rowconfigure(2, weight=1)
             toolbar = ctk.CTkFrame(page, corner_radius=10)
-            toolbar.grid(row=0, column=0, sticky='ew', pady=(0, 12))
+            toolbar.grid(row=0, column=0, sticky='ew', pady=(0, 6))
             toolbar.grid_columnconfigure(1, weight=1)
             status = ctk.CTkLabel(page, text='', anchor='w', justify='left', font=('Segoe UI', 12))
             status.grid(row=1, column=0, sticky='ew', padx=2, pady=(0, 8))
@@ -63,17 +63,17 @@ class ConvoyageWorkspace(ctk.CTkFrame):
                                     empty=empty, title=empty_title, message=empty_message, retry=retry)
         bar = self.pages['parcours']['toolbar']
         self.id_label = ctk.CTkLabel(bar, text='ModBusId', font=('Segoe UI', 14))
-        self.id_label.grid(row=0, column=0, sticky='w', padx=(16, 12), pady=16)
+        self.id_label.grid(row=0, column=0, sticky='w', padx=(16, 12), pady=8)
         self.entry = ctk.CTkEntry(bar, placeholder_text='Saisir un identifiant', height=36,
                                   corner_radius=6, font=('Segoe UI', 14), width=280)
-        self.entry.grid(row=0, column=1, sticky='ew', pady=16, padx=(0, 12))
+        self.entry.grid(row=0, column=1, sticky='ew', pady=8, padx=(0, 12))
         self.search_button = ActionButton(bar, text='Afficher le parcours', text_size=14,
                                          role='primary', width=180, command=self.search)
         self.search_button.grid(row=0, column=2, padx=(0, 16))
         self.entry.bind('<Return>', self.search)
         bar = self.pages['anomalies']['toolbar']
         self.count = ctk.CTkLabel(bar, text='Anomalies de convoyage', font=('Segoe UI', 14, 'bold'))
-        self.count.grid(row=0, column=0, sticky='w', padx=16, pady=16)
+        self.count.grid(row=0, column=0, sticky='w', padx=16, pady=8)
         self.refresh_button = ActionButton(bar, text='Actualiser', text_size=14,
                                           command=lambda: self.load('anomalies', force=True))
         self.refresh_button.grid(row=0, column=2, padx=16)
@@ -89,6 +89,8 @@ class ConvoyageWorkspace(ctk.CTkFrame):
         self._timer = self.after(80, self._poll)
 
     def _resize(self, event):
+        if self._closed or event.widget is not self:
+            return
         width = event.width/self._get_widget_scaling()
         wrap = max(220, round(width)-8)
         if wrap!=getattr(self, '_message_wrap', None):
@@ -158,6 +160,8 @@ class ConvoyageWorkspace(ctk.CTkFrame):
             self.load(tab)
 
     def load(self, tab, force=False):
+        if self._closed:
+            return
         state, page = self.states[tab], self.pages[tab]
         if tab=='parcours' and not self.query:
             return
@@ -188,6 +192,8 @@ class ConvoyageWorkspace(ctk.CTkFrame):
                         return store.convoyage_errors()
                     return [(row['_filepath'], query) for row in store.convoyage_summary(query)]
         def done(items):
+            if self._closed:
+                return
             state.update(loaded=True, revision=revision, pending=None, error=False)
             files = len({path for path, _ in items})
             files_label = f'{files} fichier'+('s' if files!=1 else '')
@@ -201,6 +207,8 @@ class ConvoyageWorkspace(ctk.CTkFrame):
                     view = self.views[tab] = ConvoyageErrorsView(page['body'], self.app, items, embedded=True)
                 else:
                     view.reset_items(items, preserve=preserve, force=True)
+                if tab=='parcours':
+                    view.configure_parcours()
                 view.list_heading.configure(text='FICHIERS' if tab=='parcours' else 'À EXAMINER')
                 page['empty'].grid_remove()
                 view.grid(row=0, column=0, sticky='nsew')
@@ -211,6 +219,8 @@ class ConvoyageWorkspace(ctk.CTkFrame):
                             f'Aucune position indexée pour le ModBusId {query} dans les sources sélectionnées.'
                             if tab=='parcours' else 'Toutes les arrivées sont retrouvées dans les fichiers contrôlés.')
         def failed(error):
+            if self._closed:
+                return
             state.update(pending=None, error=True)
             page['status'].configure(text=f'Chargement interrompu : {error}')
             # A retry remains available even when the old validated results are visible.
@@ -226,16 +236,34 @@ class ConvoyageWorkspace(ctk.CTkFrame):
         if self._closed:
             return
         self.tasks.drain()
+        if self._closed:
+            return
         self.observe_index()
         self._timer = self.after(80, self._poll)
 
+    def _stop(self):
+        if self._closed:
+            return
+        self._closed = True
+        self.tasks.close()
+        timer = getattr(self, '_timer', None)
+        if timer is not None:
+            self.after_cancel(timer)
+            self._timer = None
+
+    def destroy(self):
+        # <Destroy> on this frame is delivered after its children disappear.
+        # Invalidate callbacks before CTk starts that child destruction.
+        self._stop()
+        super().destroy()
+
     def _destroyed(self, event):
         if event.widget is self:
-            self._closed = True
-            self.tasks.close()
-            self.after_cancel(self._timer)
+            self._stop()
 
     def apply_theme(self):
+        if self._closed:
+            return
         colors = self.app._palette
         self.configure(fg_color=colors['bg'])
         self.title.configure(text_color=colors['text'])

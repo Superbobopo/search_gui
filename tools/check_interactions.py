@@ -121,16 +121,7 @@ def exercise(app, paths, script=False):
     stamp = 1000
     def click_tag(tag, double=False):
         nonlocal stamp
-        start = app.txt.tag_ranges(tag)[0]
-        pos = f'{start} +1lines +5chars' if double else f'{start} +5chars'
-        app.txt.see(pos); pump()
-        box = app.txt.bbox(pos)
-        assert box, (tag, pos)
-        x, y = box[0] + 2, box[1] + 2
-        app.txt.event_generate('<Motion>', x=x, y=y)
-        for i in range(2 if double else 1):
-            app.txt.event_generate('<ButtonPress-1>', x=x, y=y, time=stamp + i * 100)
-            app.txt.event_generate('<ButtonRelease-1>', x=x, y=y, time=stamp + i * 100 + 20)
+        click_summary(app, tag, stamp=stamp, double=double)
         stamp += 1000
     def open_event(key):
         event, path = app.selection.details[key], app.selection.path
@@ -146,17 +137,6 @@ def exercise(app, paths, script=False):
         assert text.get('1.0', 'end-1c').splitlines() == read_trace(path).splitlines()
         assert sources.trace_label(path) in window.title()
         return window, text
-    def switch_result(value, keyboard=False):
-        switch = next(w for w in descendants(app)
-                      if isinstance(w, gui.ctk.CTkSegmentedButton)
-                      and value in w._buttons_dict)
-        button = switch._buttons_dict[value]
-        if keyboard:
-            button._canvas.focus_force()
-            button._canvas.event_generate('<Return>')
-        else:
-            button.invoke()
-        pump(lambda: app.result_mode.get() == value)
     def check_label_contrast(label):
         native = label._text_label if isinstance(label, gui.ctk.CTkButton) else label._label
         foreground, background = native.cget('fg'), native.cget('bg')
@@ -177,20 +157,11 @@ def exercise(app, paths, script=False):
         check_label_contrast(app.sn_label)
         check_label_contrast(app.codelot_label)
         app.btn_gear.invoke(); pump()
-        for mode in ('Classique', 'Synthèse'):
-            previous_boxes = [w for w in descendants(app.summary_frame)
-                              if isinstance(w, gui.ctk.CTkTextbox)]
-            pending = {handle for box in previous_boxes
-                       for handle in box._pending_callbacks}
-            switch_result(mode)
-            assert all(not box._pending_callbacks for box in previous_boxes)
-            assert not pending.intersection(app.tk.splitlist(app.tk.call('after', 'info')))
-            for button in (app.btn_gear, app.btn_copy_path,
-                           *app.result_switch._buttons_dict.values()):
-                check_label_contrast(button)
-                button._canvas.event_generate('<Enter>'); pump()
-                check_label_contrast(button)
-                button._canvas.event_generate('<Leave>'); pump()
+        for button in (app.btn_gear,):
+            check_label_contrast(button)
+            button._canvas.event_generate('<Enter>'); pump()
+            check_label_contrast(button)
+            button._canvas.event_generate('<Leave>'); pump()
         for name, button in (('search', app.btn_search_menu),
                              ('tracking', app.btn_tracking_robot)):
             icon = app._nav_icons[name]
@@ -201,17 +172,13 @@ def exercise(app, paths, script=False):
                 assert app.winfo_rgb(icon.cget('bg')) == app.winfo_rgb(button._text_label.cget('bg'))
     def check_presentation():
         selected = app.selection
-        original_text = app.txt.get('1.0', 'end-1c')
-        original_styles = {tag: tuple(app.txt.tag_cget(tag, key) for key in
-                                    ('background', 'foreground', 'justify', 'font'))
-                           for tag in ('date', 'occ', 'getcard', 'putecard', 'refcard')}
+        original_text = rendered_summary_text(app)
         original_index_status = app.index_status.get()
         request_status = app.status.get()
         app._index_messages.put(('progress', 1, 2, selected.path, False, []))
         pump(lambda: 'Actualisation 1/2' in app.index_status.get())
         assert app.status.get() == request_status
         app.index_status.set(original_index_status)
-        switch_result('Synthèse')
         assert app.selection is selected
         assert {'get', 'idpk', 'pute'} <= set(app.summary_targets)
         summary_text = ' '.join(str(w.cget('text')) for w in descendants(app.summary_frame)
@@ -227,10 +194,7 @@ def exercise(app, paths, script=False):
                         check_label_contrast(label)
             check_label_contrast(app.keyword_label)
             check_design_states()
-            assert app.txt.get('1.0', 'end-1c') == original_text
-            assert {tag: tuple(app.txt.tag_cget(tag, key) for key in
-                               ('background', 'foreground', 'justify', 'font'))
-                    for tag in original_styles} == original_styles
+            assert rendered_summary_text(app) == original_text
             for index, key in enumerate(('get', 'idpk', 'pute')):
                 event = selected.details[key]
                 previous = set(titled('Vue de'))
@@ -261,11 +225,8 @@ def exercise(app, paths, script=False):
                 window.destroy()
                 assert window.trace_controller.status is None
                 assert status_reference() is None
-        switch_result('Classique', keyboard=True)
-        switch_result('Synthèse', keyboard=True)
-        switch_result('Classique', keyboard=True)
         assert app.selection is selected
-        assert app.txt.get('1.0', 'end-1c') == original_text
+        assert rendered_summary_text(app) == original_text
         app.btn_gear.invoke(); pump()
         try:
             app.geometry('860x650+18000+18000')
@@ -274,9 +235,9 @@ def exercise(app, paths, script=False):
                 gui.ctk.set_window_scaling(scale)
                 pump()
                 controls = (app.keyword, app.btn_search, app.btn_gear, app.sn_entry,
-                            app.codelot_entry, app.btn_copy_path, app.result_switch,
+                            app.codelot_entry,
                             app.btn_up, app.btn_down, app.btn_compare_idpk,
-                            app.btn_adjacent, app.btn_open_trace, app.btn_erreurs)
+                            app.btn_adjacent, app.btn_erreurs)
                 for control in controls:
                     assert control.winfo_ismapped()
                     assert control.winfo_rootx() >= app.workspace.winfo_rootx()
@@ -367,7 +328,6 @@ def exercise(app, paths, script=False):
          patch.object(indexed_ui.messagebox, 'showwarning', side_effect=lambda *args, **kw: alerts.append(args)):
         try:
             pump(lambda: app._indexed_complete)
-            switch_result('Classique')
             if script:
                 assert app.__class__.__module__ == '__main__'
                 assert app.__class__ is not gui.SearchApp
@@ -380,18 +340,10 @@ def exercise(app, paths, script=False):
             print('OK bouton IDs adjacents, homonymes R1/R2, cinq voisins', flush=True)
             click_tag('clickable_refprod'); pump(lambda: app.selection is not None and app.reference.get())
             assert (app.selection.path, app.selection.number) == (original.path, original.number)
-            click_tag('clickable_refprod'); pump(lambda: app.selection is not None and app.modbus.get())
-            assert app.keyword.get() == '1194'
-            assert (app.selection.path, app.selection.number) == (original.path, original.number)
-            print('OK vrais clics ID -> Reference -> ID, occurrence conservee', flush=True)
             for key in ('get', 'pute'):
                 window, text = open_event(key)
                 window.destroy()
             print('OK vrais doubles-clics GET/PUTE -> contenu integral et ligne exacte', flush=True)
-            assert app.txt.tag_cget('date', 'justify') == 'center'
-            assert app.txt.tag_cget('occ', 'justify') == 'center'
-            for tag, color in [('getcard', '#e3f2fd'), ('putecard', '#fff4e3'), ('refcard', '#e9fdf4')]:
-                assert app.txt.tag_cget(tag, 'background') == color
             check_presentation()
             click_tag('clickable_refprod'); pump(lambda: app.selection is not None and app.reference.get())
             app.btn_compare_idpk.invoke()
@@ -446,7 +398,7 @@ def exercise(app, paths, script=False):
             with patch.object(app.store, 'paired_adjacent', slow_adjacent):
                 app.btn_adjacent.invoke(); pump(started.is_set)
                 app.keyword.delete(0, 'end'); app.keyword.insert(0, 'ABSENT_999')
-                app.perform_search(); pump(lambda: 'Aucun fichier' in app.txt.get('1.0', 'end'))
+                app.perform_search(); pump(lambda: 'Aucun' in rendered_summary_text(app))
                 release.set(); pump(finished.is_set); pump()
             assert app.selection is None and app._display_data is None
             assert app.btn_adjacent.cget('state') == 'disabled'
@@ -528,7 +480,7 @@ def exercise(app, paths, script=False):
                 app.store = TraceStore(Path(empty_folder) / 'empty.db')
                 app._install_metadata([])
                 app.keyword.delete(0, 'end'); app.keyword.insert(0, '1194'); app.perform_search()
-                pump(lambda: 'Aucun fichier' in app.txt.get('1.0', 'end'))
+                pump(lambda: 'Aucun' in rendered_summary_text(app))
                 assert app.selection is None and not app._groups and not app.lines
                 app.open_file_view()
                 assert alerts[-1][1] == 'Aucun fichier de trace disponible.'
@@ -578,6 +530,8 @@ def main():
         exercise(gui.SearchApp(), paths)
 
 
+from tools.ui_test_support import run_gui_check
+from tools.summary_test_support import rendered_summary_text, click_summary
+
 if __name__ == '__main__':
-    from tools.ui_test_support import run_gui_check
     run_gui_check(main)

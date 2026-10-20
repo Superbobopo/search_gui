@@ -2,6 +2,13 @@
 from trace_parser import GRIPPER_COMMAND_RE, GRIPPER_RE, gripper_reply, parse_fields, get_box_context
 
 
+def add_reply(command, row, reply):
+    """Shared precedence: a later OK never erases an explicit failure."""
+    command['responses'].append(dict(row, reply=reply))
+    if command['status']!='failed' or reply['status']=='failed':
+        command.update(status=reply['status'], message=reply['message'])
+
+
 def _identity(row):
     return tuple(row.get(key) for key in ('ref', 'sn', 'lot', 'modbus'))
 
@@ -34,7 +41,7 @@ def _neighbor_command(store, path, number, direction, revision, cancel):
             'WHERE f.path=? AND l.number '+relation+" ? AND instr(l.text,'GRIPPER')>0 "
             'ORDER BY l.number '+ordering+' LIMIT 2', (path, after), cancel)
         for row in rows:
-            if GRIPPER_COMMAND_RE.search(row['text']):
+            if GRIPPER_COMMAND_RE.search(row['text']) and not gripper_reply(row['text']):
                 store._analysis_cache.put(key, (row,))
                 return row
         if len(rows)<2:
@@ -120,7 +127,8 @@ def _analyze(store, rows, cancel, references=None):
         box_context = get_box_context(row['text'])
         if box_context:
             loading_context = box_context
-        cmd = GRIPPER_COMMAND_RE.search(row['text'])
+        reply = gripper_reply(row['text'])
+        cmd = None if reply else GRIPPER_COMMAND_RE.search(row['text'])
         if cmd:
             command = None  # Every command terminates the previous reply window.
             context, loading_context = loading_context, None
@@ -159,12 +167,8 @@ def _analyze(store, rows, cancel, references=None):
                     record['pute'] = row
                     box_owners = {key: owner for key, owner in box_owners.items() if owner is not record}
             continue
-        reply = gripper_reply(row['text'])
         if reply and command is not None:
-            command['responses'].append(dict(row, reply=reply))
-            # Explicit failures take priority over contradictory OK replies.
-            if command['status']!='failed' or reply['status']=='failed':
-                command.update(status=reply['status'], message=reply['message'])
+            add_reply(command, row, reply)
             continue
         if row.get('ref') and row.get('modbus') is not None and (references is None or row['ref'] in references):
             records[row['number']] = dict(ticket=row, attempts=[], pute=None)

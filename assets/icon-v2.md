@@ -1,0 +1,9 @@
+# Icône TracOmega — 20 octobre 2026
+
+Icône active : **tracomega-v2.png**, image source RGBA 1 254 × 1 254 générée avec l'outil imagegen intégré. **tracomega-v2.ico** est son export Windows aux tailles 16, 24, 32, 48, 64, 128 et 256 px, sans modification du dessin. Extérieur transparent, tuile bleu nuit et Ω turquoise avec un point blanc de traçabilité. Les fichiers de la première icône robot/loupe restent conservés.
+
+`app_assets.py` et `search_gui.spec` consomment cette version. Le changement du `.spec` prépare une future compilation ; aucun exécutable n'est reconstruit pour cette intervention.
+
+## Prompt de génération
+
+Use case: logo-brand. Create ONE finished Windows desktop application icon for TracOmega, a professional industrial robot trace analysis application. A bold clean rounded-square navy blue tile (#142c48), containing a single large Greek capital omega Ω symbol in bright turquoise (#35d6c6), beautifully drawn as a continuous thick geometric stroke with rounded ends, high contrast and highly recognizable at 16px and 32px. Subtly integrate one tiny white tracking node into the omega's upper arc, suggesting tracing and diagnostics; keep the omega shape immediately obvious. Minimal, confident engineering software identity, premium precise silhouette, essentially flat vector-like shapes with only a very restrained tonal lift inside the navy tile. Centered symmetrical composition, generous consistent margins, icon fills roughly 90 percent of square canvas. No extra text, no letters except Ω, no subtitle, no robot face, no magnifying glass, no surrounding objects, no mockup, no perspective, no shadows outside tile. Background OUTSIDE rounded-square tile must be genuinely transparent; tile itself is opaque navy. Deliver a single polished square icon, not a sheet of variations.

@@ -86,13 +86,13 @@ def register_view(app, view):
     app._ui_views.add(view)
 
 
-def present_popup(popup, parent, width=1180, height=740, close=None):
+def present_popup(popup, parent, width=1180, height=740, close=None, *, transient=True):
     from app_assets import apply_icon
     from window_placement import show_centered_popup, monitor_work_area, native_window_bounds
     import os
     apply_icon(popup)
     popup.bind('<Escape>', lambda event: (close or popup.destroy)(), add='+')
-    show_centered_popup(popup, parent, width, height)
+    show_centered_popup(popup, parent, width, height, transient=transient)
     work = monitor_work_area(parent)
     extra_width = extra_height = 0
     if os.name=='nt':

@@ -1009,6 +1009,11 @@ class TraceStore:
             result.sort(key=lambda row: row['time'], reverse=True)
             return result
 
+    def get_errors(self, cancel=None):
+        from get_errors_service import get_errors
+        with (nullcontext() if getattr(self._local, 'snapshot', None) is not None else self.snapshot()):
+            return get_errors(self, self.analysis_revision(), cancel)
+
     def robot_errors(self):
         return self._rows("""SELECT l.*,f.path FROM lines l JOIN files f ON f.id=l.file_id
             WHERE l.modbus IS NOT NULL AND l.modbus<>'' AND l.modbus NOT GLOB '*[^0-9]*'

@@ -53,8 +53,8 @@ def monitor_work_area(widget):
     return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
 
 
-def show_centered_popup(popup, parent, width, height):
-    popup.transient(parent)
+def show_centered_popup(popup, parent, width, height, *, transient=True):
+    popup.transient(parent if transient else '')
     popup.geometry(f'{width}x{height}')
     popup.update_idletasks()
     work = monitor_work_area(parent)

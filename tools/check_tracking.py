@@ -167,6 +167,7 @@ def main():
                 [r['time'] for r in view.rows.values()], reverse=True)
             assert {view.values[k][2] for k in view.rows} == {'R1', 'R2'}
             assert view.tree['columns'] == ('date', 'hour', 'robot', 'location', 'trace', 'ref', 'sn', 'lot')
+            assert view.tree['displaycolumns'] == ('date', 'hour', 'robot', 'location', 'ref', 'sn', 'lot')
             assert view.tree.item('0', 'tags') != view.tree.item('1', 'tags')
             assert '3 dépôts' in view.count.cget('text') and '3 traces' in app.status.get()
             old_key = next(k for k, row in view.rows.items() if str(row['path']).endswith('.old'))
@@ -197,6 +198,13 @@ def main():
                     popup.assert_called_once()
                 view.menu.invoke(0)
                 assert copy.call_args.args == ('Face 2 · F32',)
+            for column in ('ref','sn','lot'):
+                cell = view.tree.bbox(old_key,column)
+                assert cell
+                with patch.object(view.menu,'tk_popup'), patch.object(view,'clipboard_clear'), patch.object(view,'clipboard_append') as copy:
+                    view.tree.event_generate('<Button-3>',x=cell[0]+cell[2]//2,y=cell[1]+12)
+                    view.menu.invoke(0)
+                    copy.assert_called_once_with(view.values[old_key][view.columns.index(column)])
             field = view.detail_title.selection_text
             field.tag_add('sel', '1.0', '1.6')
             with patch.object(field, 'clipboard_clear'), patch.object(field, 'clipboard_append') as copy:

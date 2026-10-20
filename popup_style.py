@@ -32,7 +32,7 @@ def configure_popup_style(widget, colors):
                         background=colors['border'], troughcolor=colors['bg'],
                         lightcolor=colors['border'], darkcolor=colors['border'])
         style.map(name, background=[('active', colors['muted'])])
-    for name in ('Adjacent.Treeview', 'Convoyage.Treeview'):
+    for name in ('Adjacent.Treeview', 'Convoyage.Treeview', 'GetErrors.Treeview'):
         style.configure(name, font=font(native=True), rowheight=32, borderwidth=0,
                         relief='flat', background=colors['surface'],
                         fieldbackground=colors['surface'], foreground=colors['text'])

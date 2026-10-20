@@ -205,6 +205,9 @@ class IndexedAppMixin:
         except Empty:
             pass
         try:
+            button = getattr(self, 'btn_get_errors', None)
+            if button is not None and button.winfo_exists():
+                button.configure(state='normal' if self._indexed_complete and self._sources_verified else 'disabled')
             self.tasks.drain()
         finally:
             self.after(30, self._poll_indexed_service)
@@ -596,7 +599,7 @@ class IndexedAppMixin:
                 popup.destroy()
             popup.protocol('WM_DELETE_WINDOW', close)
             self.adjacent_view.close_button.configure(command=close)
-            show_centered_popup(popup, self, 1180, 720)
+            show_centered_popup(popup, self, 1180, 720, transient=False)
             work = monitor_work_area(self)
             extra_width = extra_height = 0
             if os.name == 'nt':
@@ -754,6 +757,23 @@ class IndexedAppMixin:
             self._tracking_loading = False
             self._tracking_revision = revision
         self._submit('tracking', lambda cancel: self.store.tracking(ref, sn=sn or None, lot=lot or None, cancel=cancel), done)
+
+    def show_get_errors(self):
+        if not self._diagnostic_ready():
+            return
+        popup = getattr(self, 'get_errors_popup', None)
+        if popup is not None and popup.winfo_exists():
+            popup.deiconify()
+            popup.lift()
+            popup.get_errors_view.observe_index()
+            return
+        from get_errors_view import GetErrorsView
+        from ui_components import present_popup
+        popup = self.get_errors_popup = tk.Toplevel(self)
+        popup.title('Erreurs GET')
+        popup.get_errors_view = GetErrorsView(popup, self)
+        popup.get_errors_view.pack(fill='both', expand=True)
+        present_popup(popup, self, transient=False)
 
     def check_errors(self):
         if not self._diagnostic_ready():

@@ -166,6 +166,7 @@ def extract_columns_from_line(line, indices, column_names=None):
 class SearchApp(IndexedAppMixin, ctk.CTk):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        apply_icon(self)
 
         ctk.set_appearance_mode("System")
         ctk.set_default_color_theme("blue")
@@ -276,8 +277,10 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
                                          command=self.open_adjacent_for_current_occurrence, **secondary)
         self.btn_erreurs = ActionButton(self.action_bar, text="Erreurs Robot", width=108,
                                         command=self.check_errors, state='disabled', **secondary)
+        self.btn_get_errors = ActionButton(self.action_bar, text='Erreurs GET', width=108,
+                                           command=self.show_get_errors, state='disabled', **secondary)
         for button in (self.btn_up, self.btn_down, self.btn_compare_idpk, self.btn_adjacent,
-                       self.btn_erreurs):
+                       self.btn_erreurs, self.btn_get_errors):
             button.pack(side="left", padx=(0, 5))
         ToolTip(self.btn_erreurs, "Vérifie les prises du robot après l’arrivée sur T5.\nDisponible après l’indexation complète.")
         self.advanced_frame = ctk.CTkFrame(self.workspace, fg_color=(LIGHT['surface'], DARK['surface']))
@@ -357,6 +360,8 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
         widget = event.widget
         if not isinstance(widget, (tk.Toplevel, ctk.CTkButton, ctk.CTkRadioButton, ctk.CTkOptionMenu)):
             return
+        if isinstance(widget, tk.Toplevel) and not getattr(widget, '_tracomega_icon_applied', False):
+            apply_icon(widget)
         palette_key = tuple(self._palette.items())
         if getattr(widget, '_mapped_theme_palette', None) == palette_key:
             return
@@ -479,7 +484,8 @@ class SearchApp(IndexedAppMixin, ctk.CTk):
             side='left', before=self.btn_up, padx=(0, 6))
         for button, normal, small in ((self.btn_compare_idpk, 'Comparer IDPK', 'IDPK'),
                                       (self.btn_adjacent, 'IDs adjacents', 'Voisins'),
-                                      (self.btn_erreurs, 'Erreurs Robot', 'Erreurs Robot')):
+                                      (self.btn_erreurs, 'Erreurs Robot', 'Erreurs Robot'),
+                                      (self.btn_get_errors, 'Erreurs GET', 'Erreurs GET')):
             button.configure(text=small if compact else normal, width=82 if compact else 108)
 
     def _activate_panel(self, name):

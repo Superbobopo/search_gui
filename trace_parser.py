@@ -29,6 +29,16 @@ def gripper_reply(text):
                 explicit_get=bool(error))
 
 
+def gripper_location(text):
+    """Preserve the full raw position code and its independently stated face."""
+    face = re.search(r'\bface\s*:\s*(\d+)(?:[ \t]+([A-Za-z$]*\d+)(?![\w$]))?', text, re.I)
+    code = face[2] if face else None
+    if code is None:
+        position = re.search(r'(?:^|\s)(\$\d+)(?![\w$])', text)
+        code = position[1] if position else None
+    return dict(face=face[1] if face else None, location=code)
+
+
 FIELD_RE = re.compile(r"\b(RefProduit|SN|CodeLot|ModBusId)\s*=\s*([^<>\s/;]+)")
 STAMP_RE = re.compile(r"^\s*(?:[^\d\s]\s+)?(\d{1,2})\|(\d{2}:\d{2}:\d{2}(?:\.\d+)?)")
 GRIPPER_RE = re.compile(r"\bGRIPPER\s+(GET|PUTE)\s+1x\s+[^:\s]+:\s*Code:\s*([^<>\s;]+)")

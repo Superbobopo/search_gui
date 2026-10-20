@@ -64,13 +64,14 @@ class TrackingView(ctk.CTkFrame):
         table.grid_columnconfigure(0, weight=1)
         table.grid_rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(table, columns=self.columns, show='headings',
+                                  displaycolumns=tuple(key for key in self.columns if key!='trace'),
                                   selectmode='extended', style='Tracking.Treeview')
         for key, title, width, minimum in zip(self.columns,
                 ('DATE', 'HEURE', 'ROBOT', 'EMPLACEMENT', 'TRACE', 'RÉFÉRENCE', 'SN', 'CODELOT'),
                 (100, 100, 65, 135, 160, 140, 110, 130), (85, 85, 55, 100, 120, 110, 85, 100)):
             self.tree.heading(key, text=title, anchor='w' if key in ('location', 'trace') else 'center')
             self.tree.column(key, width=width, minwidth=minimum,
-                             anchor='w' if key in ('location', 'trace') else 'center', stretch=key == 'trace')
+                             anchor='w' if key in ('location', 'trace') else 'center', stretch=key in ('location','ref'))
         self.tree.grid(row=0, column=0, sticky='nsew', padx=(1, 0), pady=(1, 0))
         scrollbar = ttk.Scrollbar(table, orient='vertical', command=self.tree.yview)
         scrollbar.grid(row=0, column=1, sticky='ns', pady=(1, 0))
@@ -238,7 +239,7 @@ class TrackingView(ctk.CTkFrame):
         column = self.tree.identify_column(event.x)
         if key not in self.rows or not column or column == '#0':
             return
-        self._cell = (key, int(column[1:]) - 1)
+        self._cell = (key, self.columns.index(self.tree.column(column, 'id')))
         self.tree.focus(key)
         if key not in self.tree.selection():
             self.tree.selection_set(key)

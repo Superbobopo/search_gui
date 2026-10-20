@@ -8,7 +8,9 @@ Demande explicite : pousser l'ensemble des changements actuels sur `https://gith
 
 Préparation exécutée : lecture des consignes et du journal, `git status --short`, `git branch --show-current`, `git remote -v`, `git log`, `git diff --stat`, `git ls-files --others --exclude-standard`, puis `git fetch origin` et `git rev-list --left-right --count HEAD...origin/main` : réussite, divergence `0 / 0`, aucun conflit à résoudre. `git -c core.whitespace=cr-at-eol diff --check` réussi, avertissement LF/CRLF préexistant sur `trace_parser.py` uniquement. Compilation en mémoire par `py -3.13 -B` et `compile()` : 49 fichiers Python modifiés ou nouveaux réussis.
 
-Limites : aucun changement fonctionnel supplémentaire ni nouvelle exécution des suites déjà validées pour cette seule publication. Traces, bases locales, rapports/captures `.benchmark/`, environnements et builds restent exclus par les règles Git existantes ; aucun exécutable reconstruit. Le résultat du commit et du push sera consigné après confirmation du serveur.
+Publication confirmée : `git add --all`, `git diff --cached --stat`, `git commit -m "Ameliorer le convoyage, le suivi et la fluidite de Synthese"`, puis `git push origin main` réussis. Commit fonctionnel `34738ef` : 52 fichiers, 3 780 insertions et 676 suppressions. GitHub a confirmé la mise à jour `4f41d46..34738ef` de `main`. Les avertissements LF/CRLF lors de l'ajout concernent également les nouveaux fichiers ; aucun échec.
+
+Limites : aucun changement fonctionnel supplémentaire ni nouvelle exécution des suites déjà validées pour cette seule publication. Traces, bases locales, rapports/captures `.benchmark/`, environnements et builds restent exclus par les règles Git existantes ; aucun exécutable reconstruit. Cette confirmation est conservée dans un commit documentaire distinct.
 
 ## 2026-10-20 — Navigation Synthèse sans reconstruction des cartes
 

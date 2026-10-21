@@ -2,6 +2,30 @@
 
 Chaque intervention livrée ajoute une entrée ici. Consulter également `AGENTS.md` avant de modifier l'application. Les dates de travaux antérieurs n'étant pas établies, leur historique est reconstitué ci-dessous à la date de consignation ; cela ne leur attribue pas une date de réalisation inventée.
 
+## 2026-10-21 — Publication du journal sur GitHub
+
+Demande : pousser les changements locaux sur GitHub. Seul `CHANGELOG.md` est modifié : notes de récupération et de vérification Git, complétées par cette entrée. Aucun défaut ni changement de code.
+
+Préparation exécutée : lecture de `AGENTS.md` et du journal, `git status --short --branch`, `git diff -- CHANGELOG.md`, `git fetch origin` et `git rev-list --left-right --count HEAD...origin/main` : réussis, divergence 0/0 avant publication. Publication prévue par commit documentaire puis `git push origin main`, avec contrôle final de synchronisation ; le résultat sera confirmé dans le compte rendu.
+
+Contrôles `git -c core.whitespace=cr-at-eol diff --check` et variante `--cached --check` réussis ; 22 lignes documentaires initialement préparées. Premier commit refusé car aucune identité Git n’est configurée sur ce poste. `git log -5 --format="%h %an <%ae>"` confirme la même identité Superbobopo sur les cinq derniers commits : réutilisation ponctuelle de ce nom et de son adresse GitHub noreply par options `git -c`, sans configuration globale.
+
+Limites : aucun test fonctionnel ni build, changement documentaire uniquement. Les mentions « non publié » ci-dessous décrivent l’état aux moments des interventions précédentes.
+
+## 2026-10-21 — Vérification de synchronisation Git
+
+Demande : confirmer que le projet local est à jour depuis GitHub. Lecture de `AGENTS.md` et du journal ; commandes exécutées : `git status --short --branch`, `git remote -v`, `git fetch origin`, `git rev-list --left-right --count HEAD...origin/main`, `git log -1 --format="%h %s"` et `git diff --stat`. Résultat : récupération distante réussie, divergence 0/0, `main` et `origin/main` au commit `01b0631`. Seul le journal comportait déjà une modification locale ; cette entrée la complète. Aucun défaut ni code modifié.
+
+Limites : aucun test fonctionnel, lancement de l’interface ou build exécuté ; vérification des commits uniquement. Journal non commité ni publié.
+
+## 2026-10-21 — Récupération des dernières modifications GitHub
+
+Demande : récupérer la version GitHub du projet. État initial propre sur `main`, en retard de quatre commits sur `origin/main` ; aucun défaut corrigé localement.
+
+Commandes exécutées : `git status --short --branch`, `git remote -v`, lecture de `AGENTS.md` et `CHANGELOG.md`, puis `git pull --ff-only` : réussi, avance directe de `4f41d46` à `01b0631`, quatre commits récupérés sans conflit. Contrôle par `git status --short --branch` et `git log -4 --oneline` : branche alignée sur `origin/main`, aucun changement local avant cette entrée documentaire.
+
+Limites : aucune vérification fonctionnelle ni lancement de l’interface pour cette simple récupération ; aucun exécutable reconstruit. Cette entrée reste une modification locale du journal, sans commit ni publication.
+
 ## 2026-10-20 — Publication GitHub de l’icône et du rapport Erreurs GET
 
 Demande : publier les dernières évolutions sur GitHub. Cette intervention regroupe la nouvelle icône, les fenêtres indépendantes, le rapport Erreurs GET, le tableau Suivi allégé et leurs tests/documentation, décrits ci-dessous. Aucun changement métier supplémentaire.
